@@ -2,6 +2,9 @@
 
 > **Turn any GitHub repository into a searchable knowledge graph.**
 
+<img width="1437" height="720" alt="image" src="https://github.com/user-attachments/assets/6465918e-711c-4ec2-b637-fe614959a62e" />
+
+
 CodeAtlas is an open-source, AI-powered repository intelligence platform that helps developers understand unfamiliar codebases fast — using RAG, semantic code search, and architecture-aware reasoning.
 
 Instead of reading docs manually or asking teammates, CodeAtlas constructs a structured knowledge base from any public GitHub repository and lets you ask questions like:
