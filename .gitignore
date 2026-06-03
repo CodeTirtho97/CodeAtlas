@@ -73,3 +73,10 @@ temp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project internals (not for public repo)
+Project_Spec.md
+
+# uv
+.venv/
+uv.lock
