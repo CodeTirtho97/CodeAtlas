@@ -63,11 +63,15 @@ async def run(job_id: str, repository_id: str, github_url: str) -> None:
         except ClonerError as exc:
             log.warning("Clone failed for job %s: %s", job_id, exc)
             await _fail_job(session, job_id, str(exc))
+        except (ValueError, RuntimeError) as exc:
+            # Known pipeline errors — message is already user-readable
+            log.error("Pipeline failed for job %s: %s", job_id, exc)
+            await _fail_job(session, job_id, str(exc))
         except Exception as exc:
             log.error(
                 "Pipeline failed for job %s: %s", job_id, exc, exc_info=True
             )
-            await _fail_job(session, job_id, f"Internal error: {exc}")
+            await _fail_job(session, job_id, f"Unexpected error: {type(exc).__name__}: {exc}")
         finally:
             cleanup_repo(job_id)
 
@@ -107,10 +111,8 @@ async def _run_pipeline(
 
     # ── Step 4: Generate embeddings ──────────────────────────────────────────
     await _update_job(session, job_id, pct=50, msg="Generating embeddings...")
+    # embed_chunks raises RuntimeError with the actual API error if all batches fail
     chunks_with_embeddings = await asyncio.to_thread(embed_chunks, chunks)
-
-    if not chunks_with_embeddings:
-        raise ValueError("Embedding generation produced no results.")
 
     # ── Step 5: Store vectors + DB records ───────────────────────────────────
     await _update_job(session, job_id, pct=75, msg="Storing vectors...")

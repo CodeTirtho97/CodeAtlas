@@ -1,33 +1,40 @@
-"""Embedding service using Google text-embedding-004.
+"""Embedding service using Google text-embedding-004 via direct REST API.
 
-Converts code chunks into 768-dimensional vectors for semantic search.
-Handles batching, rate limiting, and retry with exponential backoff.
+Bypasses the google-genai SDK's model resolution logic (which constructs
+incorrect URLs for embed_content in v2.x) and calls the Gemini REST
+endpoint directly via httpx.
 
-Uses google-genai (the current SDK, replacing the deprecated google-generativeai).
+API reference:
+  POST https://generativelanguage.googleapis.com/v1beta/models/
+       text-embedding-004:batchEmbedContents?key=API_KEY
 """
 import logging
 import random
 import time
 from typing import List, Optional, Tuple
 
-from google import genai
-from google.genai import types as genai_types
+import httpx
 
 from app.core.config import settings
 from app.services.ingestion.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "models/text-embedding-004"
-EMBEDDING_DIMS  = 768
-BATCH_SIZE      = 100   # Google API max per call
+_EMBED_MODEL = "models/gemini-embedding-001"
+_BASE_URL = (
+    "https://generativelanguage.googleapis.com"
+    "/v1beta/models/gemini-embedding-001:batchEmbedContents"
+)
+EMBEDDING_DIMS   = 3072  # gemini-embedding-001 output dimension
+BATCH_SIZE       = 50    # reduced to stay under per-minute quota
+INTER_BATCH_DELAY = 0.5  # seconds between successful batches
 
-# Retry / backoff
-MAX_RETRIES  = 5
-BASE_DELAY   = 1.0   # seconds
-DELAY_FACTOR = 2.0
-MAX_DELAY    = 60.0
-JITTER       = 1.0   # ± random seconds added to each delay
+MAX_RETRIES       = 4
+BASE_DELAY        = 2.0
+DELAY_FACTOR      = 2.0
+MAX_DELAY         = 30.0
+JITTER            = 0.5
+RATE_LIMIT_DELAY  = 15.0  # wait on 429 before retrying
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
@@ -35,141 +42,148 @@ JITTER       = 1.0   # ± random seconds added to each delay
 def embed_chunks(chunks: List[Chunk]) -> List[Tuple[Chunk, List[float]]]:
     """Generate RETRIEVAL_DOCUMENT embeddings for a list of code chunks.
 
-    Batches into groups of BATCH_SIZE, retries on rate limits, and skips
-    any batch that fails after MAX_RETRIES attempts.
-
-    Returns:
-        List of (chunk, embedding_vector) tuples for successful chunks only.
+    Raises RuntimeError if every batch fails (no embeddings produced at all),
+    so callers get the actual failure reason rather than a silent empty list.
     """
-    client = _make_client()
     results: List[Tuple[Chunk, List[float]]] = []
-    batches = _make_batches(chunks, BATCH_SIZE)
+    batches = [chunks[i: i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
+    last_error: Optional[str] = None
 
     for idx, batch in enumerate(batches):
-        log.debug(
-            "Embedding batch %d/%d (%d chunks)",
-            idx + 1, len(batches), len(batch),
-        )
+        log.debug("Embedding batch %d/%d (%d chunks)", idx + 1, len(batches), len(batch))
         texts = [_prepare_text(c) for c in batch]
-        embeddings = _embed_with_retry(
-            client, texts, task_type="RETRIEVAL_DOCUMENT"
-        )
+        embeddings, error = _embed_with_retry(texts, task_type="RETRIEVAL_DOCUMENT")
 
         if embeddings is None:
+            last_error = error
             log.warning(
-                "Batch %d failed after %d retries — skipping %d chunks",
-                idx + 1, MAX_RETRIES, len(batch),
+                "Batch %d/%d failed after %d retries — skipping %d chunks. Reason: %s",
+                idx + 1, len(batches), MAX_RETRIES, len(batch), error,
             )
             continue
 
         results.extend(zip(batch, embeddings))
 
-    log.info(
-        "Embedded %d/%d chunks successfully",
-        len(results), len(chunks),
-    )
+        # Pace between batches to avoid hitting per-minute quota
+        if idx < len(batches) - 1:
+            time.sleep(INTER_BATCH_DELAY)
+
+    if not results:
+        hint = ""
+        if last_error and "429" in last_error:
+            hint = " Your Google AI API quota is exhausted. Check https://ai.dev/rate-limit and retry later or upgrade your plan."
+        elif last_error and ("403" in last_error or "401" in last_error):
+            hint = " Check that GOOGLE_API_KEY is valid and has the Generative Language API enabled."
+        raise RuntimeError(
+            f"Embedding API returned no results for any batch. "
+            f"Last error: {last_error or 'unknown'}.{hint}"
+        )
+
+    log.info("Embedded %d/%d chunks successfully", len(results), len(chunks))
     return results
 
 
 def embed_query(query: str) -> List[float]:
-    """Generate a RETRIEVAL_QUERY embedding for a search query.
-
-    Returns:
-        768-dimensional embedding vector.
-
-    Raises:
-        RuntimeError: if embedding fails after MAX_RETRIES attempts.
-    """
-    client = _make_client()
-    result = _embed_with_retry(client, [query], task_type="RETRIEVAL_QUERY")
-
-    if result is None:
-        raise RuntimeError(
-            f"Failed to embed query after {MAX_RETRIES} retries."
-        )
-
-    return result[0]
+    """Generate a RETRIEVAL_QUERY embedding for a search query."""
+    embeddings, error = _embed_with_retry([query], task_type="RETRIEVAL_QUERY")
+    if embeddings is None:
+        raise RuntimeError(f"Failed to embed query after {MAX_RETRIES} retries. {error or ''}")
+    return embeddings[0]
 
 
 # ─── Internals ───────────────────────────────────────────────────────────────
 
-def _make_client() -> genai.Client:
-    """Create a configured Google GenAI client."""
-    return genai.Client(api_key=settings.GOOGLE_API_KEY)
-
-
 def _prepare_text(chunk: Chunk) -> str:
-    """Build the text fed to the embedding model.
-
-    Prepends a short metadata line so the model has context about
-    what kind of code it is embedding.
-    """
     parts = [chunk.language, chunk.chunk_type]
     if chunk.function_name:
         parts.append(chunk.function_name)
     elif chunk.class_name:
         parts.append(chunk.class_name)
     parts.append(chunk.file_path)
-
     header = " | ".join(parts)
-    # Truncate chunk_text to avoid exceeding token limits (approx 8k tokens)
     body = chunk.chunk_text[:8000]
     return f"[{header}]\n{body}"
 
 
 def _embed_with_retry(
-    client: genai.Client,
     texts: List[str],
     task_type: str = "RETRIEVAL_DOCUMENT",
-) -> Optional[List[List[float]]]:
-    """Call embed_content with exponential backoff on rate-limit errors.
+) -> Tuple[Optional[List[List[float]]], Optional[str]]:
+    """Call batchEmbedContents REST endpoint with exponential backoff.
 
-    Returns the list of embedding vectors, or None if all retries fail.
+    Returns (embeddings, None) on success or (None, error_message) on failure.
     """
     delay = BASE_DELAY
+    last_error: Optional[str] = None
+
+    payload = {
+        "requests": [
+            {
+                "model": _EMBED_MODEL,
+                "content": {"parts": [{"text": t}]},
+                "taskType": task_type,
+            }
+            for t in texts
+        ]
+    }
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = client.models.embed_content(
-                model=EMBEDDING_MODEL,
-                contents=texts,
-                config=genai_types.EmbedContentConfig(task_type=task_type),
-            )
-            return [list(e.values) for e in response.embeddings]
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.post(
+                    _BASE_URL,
+                    headers={
+                        "x-goog-api-key": settings.GOOGLE_API_KEY,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
 
-        except Exception as exc:
-            exc_name = type(exc).__name__
-            is_rate_limit = (
-                "ResourceExhausted" in exc_name
-                or "429" in str(exc)
-                or "quota" in str(exc).lower()
-            )
+            if resp.status_code == 200:
+                data = resp.json()
+                embeddings = data.get("embeddings")
+                if not embeddings:
+                    last_error = "API returned 200 but 'embeddings' field is empty or missing"
+                    log.error("Embedding API returned empty embeddings field: %s", data)
+                    return None, last_error
+                return [e["values"] for e in embeddings], None
+
+            err_body = resp.text[:600]
+            last_error = f"HTTP {resp.status_code}: {err_body}"
+            is_rate_limit = resp.status_code == 429
 
             if attempt == MAX_RETRIES:
-                log.error(
-                    "Embedding failed on attempt %d/%d (%s): %s",
-                    attempt, MAX_RETRIES, exc_name, exc,
-                )
-                return None
+                log.error("Embedding failed after %d attempts — %s", MAX_RETRIES, last_error)
+                return None, last_error
 
             if is_rate_limit:
+                # Respect Retry-After header if present, otherwise use RATE_LIMIT_DELAY
+                retry_after = resp.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else RATE_LIMIT_DELAY
                 log.warning(
-                    "Rate limit hit (attempt %d/%d) — waiting %.1fs",
-                    attempt, MAX_RETRIES, delay,
+                    "Rate limit / quota hit (attempt %d/%d) — waiting %.0fs before retry",
+                    attempt, MAX_RETRIES, wait,
                 )
+                time.sleep(wait)
+                continue  # skip normal jitter sleep below
             else:
                 log.warning(
-                    "Embedding error on attempt %d/%d (%s): %s — retrying in %.1fs",
-                    attempt, MAX_RETRIES, exc_name, exc, delay,
+                    "Embedding error attempt %d/%d — %s — retrying in %.1fs",
+                    attempt, MAX_RETRIES, last_error, delay,
                 )
 
-            jitter = random.uniform(-JITTER, JITTER)
-            time.sleep(max(0.0, delay + jitter))
-            delay = min(delay * DELAY_FACTOR, MAX_DELAY)
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            if attempt == MAX_RETRIES:
+                log.error("Embedding failed after %d attempts — %s", MAX_RETRIES, last_error)
+                return None, last_error
+            log.warning(
+                "Embedding exception attempt %d/%d — %s — retrying in %.1fs",
+                attempt, MAX_RETRIES, last_error, delay,
+            )
 
-    return None  # unreachable, satisfies type checker
+        jitter = random.uniform(-JITTER, JITTER)
+        time.sleep(max(0.0, delay + jitter))
+        delay = min(delay * DELAY_FACTOR, MAX_DELAY)
 
-
-def _make_batches(items: list, size: int) -> List[list]:
-    """Split a list into consecutive chunks of at most `size` items."""
-    return [items[i: i + size] for i in range(0, len(items), size)]
+    return None, last_error

@@ -1,10 +1,13 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="tree_sitter")
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import init_db, close_db, get_session
 from app.core.qdrant import init_qdrant
-from app.api.routes import auth, repos, query
+from app.api.routes import auth, repos, query, chat
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -30,14 +33,28 @@ app.add_middleware(
 )
 
 # Security headers middleware
+_DOCS_PATHS = {"/api/docs", "/api/redoc", "/openapi.json"}
+
 @app.middleware("http")
 async def add_security_headers(request, call_next):
     response = await call_next(request)
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
+
+    if request.url.path in _DOCS_PATHS:
+        # Swagger/ReDoc load assets from cdn.jsdelivr.net — allow it
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https://cdn.jsdelivr.net;"
+        )
+    else:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+
     return response
 
 
@@ -45,6 +62,7 @@ async def add_security_headers(request, call_next):
 app.include_router(auth.router)
 app.include_router(repos.router)
 app.include_router(query.router)
+app.include_router(chat.router)
 
 
 @app.get("/health")

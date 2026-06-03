@@ -14,6 +14,13 @@ from app.models.schemas.repository import (
     RepositoryDeleteResponse,
 )
 from app.models.schemas.query import QueryRequest, QueryResponse, SourceCitation
+from app.models.schemas.chat import (
+    ChatSessionResponse,
+    ChatSessionCreate,
+    ChatMessageResponse,
+    ChatAskRequest,
+    ChatAskResponse,
+)
 
 __all__ = [
     "UserBase",
@@ -30,4 +37,9 @@ __all__ = [
     "QueryRequest",
     "QueryResponse",
     "SourceCitation",
+    "ChatSessionResponse",
+    "ChatSessionCreate",
+    "ChatMessageResponse",
+    "ChatAskRequest",
+    "ChatAskResponse",
 ]

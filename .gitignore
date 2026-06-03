@@ -1,15 +1,22 @@
-# Python
+# ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyo
+*.pyd
 .Python
-env/
+
+# Virtual environments
+.venv/
 venv/
+env/
 ENV/
+
+# Distribution / packaging
+dist/
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -26,57 +33,79 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Node
+# Testing & coverage
+.pytest_cache/
+.benchmarks/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+nosetests.xml
+pytest.ini.bak
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# Alembic
+alembic/versions/__pycache__/
+
+# uv
+uv.lock
+
+# ─── Node / Frontend ──────────────────────────────────────────────────────────
 node_modules/
-npm-debug.log
-yarn-error.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Vite / TypeScript build outputs
 dist/
-.vite
+.vite/
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
 
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-.env.local
-.env.*.local
-
-# Environment variables
+# ─── Environment variables ────────────────────────────────────────────────────
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
 
-# Database
+# ─── Databases & local data ───────────────────────────────────────────────────
 *.db
 *.sqlite
 *.sqlite3
 postgres_data/
 qdrant_data/
 
-# Logs
+# ─── Logs ─────────────────────────────────────────────────────────────────────
 logs/
 *.log
 
-# Temporary files
+# ─── Temporary / scratch ──────────────────────────────────────────────────────
 tmp/
 temp/
 .tmp/
 
-# IDE
-.vscode
-.idea
+# ─── IDEs & editors ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 *.sublime-workspace
 *.sublime-project
 
-# OS
+# ─── OS artifacts ─────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Project internals (not for public repo)
+# ─── Project internals ────────────────────────────────────────────────────────
 Project_Spec.md
-
-# uv
-.venv/
-uv.lock

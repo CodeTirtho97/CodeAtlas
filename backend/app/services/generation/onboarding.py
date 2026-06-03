@@ -18,7 +18,7 @@ from app.services.ingestion.file_filter import FileInfo
 
 log = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 _ONBOARDING_PROMPT = """\
 You are creating a developer onboarding guide for the repository: {repo_name}

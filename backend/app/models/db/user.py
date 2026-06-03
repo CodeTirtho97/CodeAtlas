@@ -20,6 +20,7 @@ class User(BaseModel):
     # Relationships
     repositories = relationship("Repository", back_populates="user", cascade="all, delete-orphan")
     questions = relationship("Question", back_populates="user", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User {self.github_username}>"

@@ -4,12 +4,17 @@ from sqlalchemy.future import select
 from datetime import datetime, timedelta
 from jose import jwt
 import httpx
+from pydantic import BaseModel
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.db import User
 from app.models.schemas import LoginResponse, UserResponse, LoginRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+class CallbackRequest(BaseModel):
+    code: str
 
 
 @router.get("/login")
@@ -26,13 +31,12 @@ async def login():
 
 
 @router.post("/callback")
-async def callback(code: str, session: AsyncSession = Depends(get_session)):
-    """Handle GitHub OAuth callback."""
-    if not code:
-        raise HTTPException(status_code=400, detail="No authorization code provided")
+async def callback(body: CallbackRequest, session: AsyncSession = Depends(get_session)):
+    """Handle GitHub OAuth callback — exchanges code for JWT."""
+    code = body.code
 
-    # Exchange code for access token
     async with httpx.AsyncClient() as client:
+        # 1. Exchange code for GitHub access token
         token_response = await client.post(
             "https://github.com/login/oauth/access_token",
             data={
@@ -43,32 +47,36 @@ async def callback(code: str, session: AsyncSession = Depends(get_session)):
             headers={"Accept": "application/json"},
         )
 
-    if token_response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Failed to exchange code for token")
+        if token_response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to exchange code for token")
 
-    token_data = token_response.json()
-    access_token = token_data.get("access_token")
+        token_data = token_response.json()
+        github_token = token_data.get("access_token")
+        if not github_token:
+            raise HTTPException(status_code=400, detail="No access token returned by GitHub")
 
-    if not access_token:
-        raise HTTPException(status_code=400, detail="No access token in response")
+        auth_header = {"Authorization": f"token {github_token}"}
 
-    # Get user info from GitHub
-    async with httpx.AsyncClient() as client:
-        user_response = await client.get(
-            "https://api.github.com/user",
-            headers={"Authorization": f"token {access_token}"},
-        )
+        # 2. Fetch user profile
+        user_response = await client.get("https://api.github.com/user", headers=auth_header)
+        if user_response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to fetch GitHub user profile")
 
-    if user_response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Failed to get user info from GitHub")
+        github_user = user_response.json()
+        github_id = github_user.get("id")
+        github_username = github_user.get("login")
+        email = github_user.get("email")  # may be None for private accounts
 
-    github_user = user_response.json()
-    github_id = github_user.get("id")
-    github_username = github_user.get("login")
-    email = github_user.get("email")
+        # 3. Fallback: fetch primary email from /user/emails if profile email is private
+        if not email:
+            emails_response = await client.get("https://api.github.com/user/emails", headers=auth_header)
+            if emails_response.status_code == 200:
+                emails = emails_response.json()
+                primary = next((e["email"] for e in emails if e.get("primary") and e.get("verified")), None)
+                email = primary or next((e["email"] for e in emails if e.get("verified")), None)
 
     if not all([github_id, github_username, email]):
-        raise HTTPException(status_code=400, detail="Incomplete user data from GitHub")
+        raise HTTPException(status_code=400, detail="Could not retrieve required user data from GitHub")
 
     # Upsert user in database
     result = await session.execute(
@@ -117,19 +125,6 @@ async def logout():
     return {"message": "Logged out successfully"}
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user(
-    current_user: User = Depends(get_current_user_dependency),
-) -> UserResponse:
-    """Get current logged-in user."""
-    return UserResponse(
-        id=current_user.id,
-        github_username=current_user.github_username,
-        email=current_user.email,
-        github_id=current_user.github_id,
-    )
-
-
 async def get_current_user_dependency(
     token: str = None, session: AsyncSession = Depends(get_session)
 ) -> User:
@@ -151,3 +146,16 @@ async def get_current_user_dependency(
         return user
     except jwt.JWTError:
         raise HTTPException(status_code=403, detail="Invalid token")
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user(
+    current_user: User = Depends(get_current_user_dependency),
+) -> UserResponse:
+    """Get current logged-in user."""
+    return UserResponse(
+        id=current_user.id,
+        github_username=current_user.github_username,
+        email=current_user.email,
+        github_id=current_user.github_id,
+    )

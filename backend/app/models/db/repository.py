@@ -28,6 +28,7 @@ class Repository(BaseModel):
     ingestion_jobs = relationship(
         "IngestionJob", back_populates="repository", cascade="all, delete-orphan"
     )
+    chat_sessions = relationship("ChatSession", back_populates="repository", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Repository {self.name}>"

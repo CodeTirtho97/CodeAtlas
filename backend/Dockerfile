@@ -12,11 +12,16 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies via uv (uses pyproject.toml)
-COPY pyproject.toml .
+# ── Dependency layer (cached unless pyproject.toml changes) ──────────────────
+# hatchling validates readme + package dir at build time, so both must exist.
+# We copy README.md and create a stub app/ so the editable install succeeds,
+# then overwrite with real source code in the next COPY step.
+COPY pyproject.toml README.md ./
+RUN mkdir -p app && touch app/__init__.py
 RUN uv pip install --system -e .
 
-# Copy application code
+# ── Application code ─────────────────────────────────────────────────────────
+# Copied after deps so code changes don't invalidate the pip-install cache.
 COPY . .
 
 EXPOSE 8000

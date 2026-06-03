@@ -16,7 +16,7 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # Manifest files that describe the project stack
 _MANIFEST_NAMES = [

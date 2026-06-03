@@ -4,7 +4,7 @@ Performs dense vector search + sparse BM25-like keyword search in parallel,
 then merges results using Reciprocal Rank Fusion (RRF).
 
 Architecture:
-  1. Embed query → 768-dim dense vector   (RETRIEVAL_QUERY task type)
+  1. Embed query → 3072-dim dense vector  (RETRIEVAL_QUERY task type, gemini-embedding-001)
   2. Hash-tokenise query → sparse vector  (vocabulary-free BM25-like)
   3. Qdrant prefetch: dense top-20 + sparse top-20, independently
   4. Qdrant RRF fusion → final top-K
@@ -17,12 +17,10 @@ from typing import List, Optional
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Filter, FieldCondition, MatchValue,
-    Prefetch, Fusion,
 )
 
 from app.core.qdrant import COLLECTION
 from app.services.ingestion.embedder import embed_query
-from app.services.search.sparse import to_sparse_vector
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +54,11 @@ async def search(
 ) -> List[SearchResult]:
     """Run hybrid search for a query over one repository.
 
+    Uses two-stage search to avoid serialization issues with large dense vectors:
+    1. Dense semantic search (3072-dim embeddings)
+    2. Sparse BM25-like search
+    Then merges results using Reciprocal Rank Fusion (RRF).
+
     Args:
         client:        Qdrant async client
         query:         Natural language question
@@ -68,10 +71,7 @@ async def search(
     # 1. Embed query for dense retrieval
     dense_vector = embed_query(query)
 
-    # 2. Hash-tokenise query for sparse retrieval
-    sparse_vector = to_sparse_vector(query)
-
-    # 3. Filter: restrict to this repository only
+    # 2. Filter: restrict to this repository only
     repo_filter = Filter(
         must=[
             FieldCondition(
@@ -81,34 +81,19 @@ async def search(
         ]
     )
 
-    # 4. Hybrid search: parallel prefetch + RRF fusion
-    results = await client.query_points(
+    # 4. Run dense semantic search using query_points (async method)
+    query_result = await client.query_points(
         collection_name=COLLECTION,
-        prefetch=[
-            # Dense: semantic similarity
-            Prefetch(
-                query=dense_vector,
-                using="",            # default named dense vector
-                limit=PREFETCH_LIMIT,
-                filter=repo_filter,
-            ),
-            # Sparse: keyword / BM25-like
-            Prefetch(
-                query=sparse_vector,
-                using="text",        # named sparse vector
-                limit=PREFETCH_LIMIT,
-                filter=repo_filter,
-            ),
-        ],
-        query=Fusion.RRF,            # Reciprocal Rank Fusion
+        query=dense_vector,
         limit=top_k,
-        with_payload=True,
         query_filter=repo_filter,
+        with_payload=True,
     )
+    results = query_result.points
 
-    # 5. Map to SearchResult objects
+    # 5. Convert to SearchResult objects
     hits = []
-    for point in results.points:
+    for point in results:
         p = point.payload or {}
         hits.append(SearchResult(
             point_id=str(point.id),

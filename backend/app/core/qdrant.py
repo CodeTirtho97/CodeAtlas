@@ -30,7 +30,7 @@ async def init_qdrant() -> AsyncQdrantClient:
         collection_name=COLLECTION,
         # Named dense vector — "" is the default, "text" is sparse
         vectors_config={
-            "": VectorParams(size=768, distance=Distance.COSINE),
+            "": VectorParams(size=3072, distance=Distance.COSINE),
         },
         sparse_vectors_config={
             "text": SparseVectorParams(

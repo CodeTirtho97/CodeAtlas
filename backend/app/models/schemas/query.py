@@ -10,7 +10,7 @@ class SourceCitation(BaseModel):
     class_name: Optional[str] = None
     line_start: Optional[int] = None
     line_end: Optional[int] = None
-    chunk_type: str
+    chunk_type: Optional[str] = None
 
 
 class QueryRequest(BaseModel):

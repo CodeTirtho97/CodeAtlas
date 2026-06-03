@@ -23,7 +23,7 @@ from app.services.search.retriever import SearchResult, search
 
 log = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_TOP_K = 8
 
 _QA_PROMPT = """\
@@ -56,6 +56,49 @@ Question: {question}
 
 ---
 Code Context:
+{context}
+
+Return ONLY the JSON object.
+"""
+
+_QA_PROMPT_WITH_HISTORY = """\
+You are an expert on the {repo_name} codebase.
+
+You are having a conversation with a developer. Below is the conversation history,
+followed by the current question and code context.
+
+Use the history to understand context and provide coherent follow-up answers.
+Answer using ONLY the code context provided below.
+Be specific: reference exact functions, classes, and files.
+
+After your explanation, list every source chunk you actually used.
+
+Return a JSON object with exactly these fields:
+{{
+  "answer": "<full natural-language explanation, markdown allowed>",
+  "sources": [
+    {{
+      "file_path": "<exact file path from context>",
+      "function_name": "<function or null>",
+      "class_name": "<class or null>",
+      "line_start": <number or null>,
+      "line_end": <number or null>
+    }}
+  ]
+}}
+
+Only include sources you actually referenced in the answer.
+If the context does not contain enough information, say so in the answer field.
+
+---
+CONVERSATION HISTORY:
+{history}
+
+---
+CURRENT QUESTION: {question}
+
+---
+CODE CONTEXT:
 {context}
 
 Return ONLY the JSON object.
@@ -110,6 +153,79 @@ async def answer_question(
         }
 
     # 4. Enrich sources with metadata from search results
+    enriched_sources = _enrich_sources(raw.get("sources", []), results)
+
+    return {
+        "answer": raw.get("answer", ""),
+        "sources": enriched_sources,
+    }
+
+
+async def answer_with_history(
+    client: AsyncQdrantClient,
+    question: str,
+    repository_id: str,
+    repo_name: str,
+    history: List[dict],
+    top_k: int = DEFAULT_TOP_K,
+) -> dict:
+    """Run the Q&A pipeline with conversation history for chat context.
+
+    Args:
+        client: Qdrant async client
+        question: Current question from user
+        repository_id: Repository UUID string
+        repo_name: Repository name for context
+        history: List of prior messages [{"role": "user"|"assistant", "content": str}, ...]
+        top_k: Number of chunks to retrieve
+
+    Returns:
+        {
+          "answer": str,
+          "sources": [{file_path, function_name, class_name, line_start, line_end}]
+        }
+    """
+    # 1. Retrieve relevant chunks
+    results = await search(client, question, repository_id, top_k=top_k)
+
+    if not results:
+        return {
+            "answer": (
+                "I couldn't find relevant context for this question "
+                "in the indexed repository. Try rephrasing or ask about "
+                "a specific file or function."
+            ),
+            "sources": [],
+        }
+
+    # 2. Build annotated context string
+    context = _build_context(results)
+
+    # 3. Format conversation history
+    history_text = ""
+    if history:
+        history_lines = []
+        for msg in history:
+            role_label = "Developer" if msg["role"] == "user" else "Assistant"
+            history_lines.append(f"{role_label}: {msg['content']}")
+        history_text = "\n".join(history_lines)
+
+    # 4. Call Gemini with history-aware prompt
+    prompt = _QA_PROMPT_WITH_HISTORY.format(
+        repo_name=repo_name,
+        history=history_text,
+        question=question,
+        context=context,
+    )
+
+    raw = _call_gemini(prompt)
+    if raw is None:
+        return {
+            "answer": "Unable to generate an answer at this time. Please try again.",
+            "sources": [],
+        }
+
+    # 5. Enrich sources with metadata from search results
     enriched_sources = _enrich_sources(raw.get("sources", []), results)
 
     return {
