@@ -1,9 +1,14 @@
-from pydantic_settings import BaseSettings
 from typing import Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+    )
 
     # Database
     DATABASE_URL: str
@@ -25,10 +30,6 @@ class Settings(BaseSettings):
     # Application
     FRONTEND_URL: str
     LOG_LEVEL: str = "INFO"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
 
     def validate_required_fields(self):
         """Validate all required fields are set."""

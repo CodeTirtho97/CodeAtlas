@@ -1,49 +1,59 @@
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams
+from qdrant_client.models import (
+    Distance, VectorParams, SparseVectorParams, SparseIndexParams,
+    TextIndexParams, TokenizerType,
+)
 from app.core.config import settings
+
+COLLECTION = "code_chunks"
 
 
 async def get_qdrant_client() -> AsyncQdrantClient:
-    """Get Qdrant client instance."""
-    return AsyncQdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
+    """Create a Qdrant async client from settings."""
+    return AsyncQdrantClient(
+        url=settings.QDRANT_URL,
+        api_key=settings.QDRANT_API_KEY or None,
+    )
 
 
-async def init_qdrant():
-    """Initialize Qdrant collection for code chunks."""
+async def init_qdrant() -> AsyncQdrantClient:
+    """Ensure the code_chunks collection exists with correct schema."""
     client = await get_qdrant_client()
 
-    collection_name = "code_chunks"
-
     try:
-        # Check if collection exists
-        await client.get_collection(collection_name)
+        await client.get_collection(COLLECTION)
+        return client  # already exists
     except Exception:
-        # Collection doesn't exist, create it
-        await client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
-            sparse_vectors_config={
-                "text": SparseVectorParams(
-                    index=SparseIndexParams(on_disk=True),
-                )
-            },
-        )
+        pass  # create it below
 
-        # Create payload indexes
-        await client.create_payload_index(
-            collection_name=collection_name,
-            field_name="repository_id",
-            field_schema="integer",
-        )
-        await client.create_payload_index(
-            collection_name=collection_name,
-            field_name="chunk_type",
-            field_schema="keyword",
-        )
-        await client.create_payload_index(
-            collection_name=collection_name,
-            field_name="language",
-            field_schema="keyword",
-        )
+    await client.create_collection(
+        collection_name=COLLECTION,
+        # Named dense vector — "" is the default, "text" is sparse
+        vectors_config={
+            "": VectorParams(size=768, distance=Distance.COSINE),
+        },
+        sparse_vectors_config={
+            "text": SparseVectorParams(
+                index=SparseIndexParams(on_disk=True),
+            ),
+        },
+    )
+
+    # Payload indexes for fast filtering
+    await client.create_payload_index(
+        collection_name=COLLECTION,
+        field_name="repository_id",
+        field_schema="keyword",       # UUID strings
+    )
+    await client.create_payload_index(
+        collection_name=COLLECTION,
+        field_name="chunk_type",
+        field_schema="keyword",
+    )
+    await client.create_payload_index(
+        collection_name=COLLECTION,
+        field_name="language",
+        field_schema="keyword",
+    )
 
     return client
