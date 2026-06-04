@@ -4,6 +4,7 @@ Builds a directed graph where an edge A → B means "file A imports file B".
 Only project-internal edges are kept (stdlib and third-party are dropped).
 """
 import logging
+import re
 from collections import defaultdict
 from typing import Dict, List, Set
 
@@ -143,32 +144,51 @@ def _resolve_python(raw: str, source: str, files: Set[str]) -> str | None:
 def _resolve_js(raw: str, source: str, files: Set[str]) -> str | None:
     """Resolve a JS/TS import specifier to a project file path.
 
-    Relative imports start with './' or '../'.
+    Handles:
+      - Relative: './auth', '../services/auth'
+      - Path aliases / bare specifiers: '@/services/auth', 'utils/helpers'
+        (matched by trailing path components against project files)
     """
-    if not raw.startswith("."):
-        return None  # node_modules / bare specifier — external
-
-    source_dir = "/".join(source.split("/")[:-1])
-
-    # Normalise the relative path (os.path.normpath handles .. correctly)
     import os
-    try:
-        joined = os.path.join(source_dir, raw) if source_dir else raw
-        resolved = os.path.normpath(joined).replace("\\", "/")
-    except Exception:
+
+    _JS_EXTS = (".ts", ".tsx", ".js", ".jsx")
+
+    if raw.startswith("."):
+        # Relative import — resolve normally
+        source_dir = "/".join(source.split("/")[:-1])
+        try:
+            joined = os.path.join(source_dir, raw) if source_dir else raw
+            resolved = os.path.normpath(joined).replace("\\", "/")
+        except Exception:
+            return None
+
+        for ext in _JS_EXTS:
+            if resolved + ext in files:
+                return resolved + ext
+        for ext in _JS_EXTS:
+            candidate = resolved + "/index" + ext
+            if candidate in files:
+                return candidate
         return None
 
-    # Try common extensions in preference order
-    for ext in (".ts", ".tsx", ".js", ".jsx"):
-        candidate = resolved + ext
-        if candidate in files:
-            return candidate
+    # Non-relative: strip alias prefix (e.g. '@/', '~/', 'src/')
+    # then try matching the trailing path components against project files.
+    stripped = re.sub(r"^[@~][^/]*/", "", raw)   # remove @alias/ or ~alias/
+    stripped = re.sub(r"^src/", "", stripped)      # common src/ prefix
 
-    # Try index file
-    for ext in (".ts", ".tsx", ".js", ".jsx"):
-        candidate = resolved + "/index" + ext
-        if candidate in files:
-            return candidate
+    parts = stripped.split("/")
+    # Try progressively shorter suffixes (most-specific first)
+    for length in range(min(len(parts), 4), 0, -1):
+        suffix = "/".join(parts[-length:])
+        for ext in _JS_EXTS:
+            # exact suffix match with extension
+            for f in files:
+                if f.endswith("/" + suffix + ext) or f == suffix + ext:
+                    return f
+            # already has extension
+            for f in files:
+                if f.endswith("/" + suffix) or f == suffix:
+                    return f
 
     return None
 

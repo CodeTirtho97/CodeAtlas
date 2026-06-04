@@ -5,14 +5,19 @@ then merges results using Reciprocal Rank Fusion (RRF).
 
 Architecture:
   1. Embed query → 3072-dim dense vector  (RETRIEVAL_QUERY task type, gemini-embedding-001)
-  2. Hash-tokenise query → sparse vector  (vocabulary-free BM25-like)
+  2. Hash-tokenise query → sparse vector  (vocabulary-free BM25-like, see sparse.py)
   3. Qdrant prefetch: dense top-20 + sparse top-20, independently
   4. Qdrant RRF fusion → final top-K
   5. Return structured SearchResult objects with full chunk metadata
+
+Why hybrid?
+  Dense search handles semantic intent ("how is login handled?").
+  Sparse search handles exact identifiers (JWT_SECRET, AuthService, verify_token).
+  RRF ensures a result that is strong in either signal ranks highly in the final list.
 """
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
@@ -21,6 +26,7 @@ from qdrant_client.models import (
 
 from app.core.qdrant import COLLECTION
 from app.services.ingestion.embedder import embed_query
+from app.services.search.sparse import to_sparse_vector
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +34,8 @@ log = logging.getLogger(__name__)
 PREFETCH_LIMIT = 20
 # Final results returned to the caller
 DEFAULT_TOP_K = 10
+# RRF smoothing constant
+RRF_K = 60
 
 
 @dataclass
@@ -54,10 +62,11 @@ async def search(
 ) -> List[SearchResult]:
     """Run hybrid search for a query over one repository.
 
-    Uses two-stage search to avoid serialization issues with large dense vectors:
-    1. Dense semantic search (3072-dim embeddings)
-    2. Sparse BM25-like search
-    Then merges results using Reciprocal Rank Fusion (RRF).
+    Two candidate sets are retrieved independently then merged:
+      - Dense prefetch  : semantic similarity via 3072-dim embeddings
+      - Sparse prefetch : exact-token matching via feature-hashed TF vectors
+
+    Qdrant's built-in RRF fusion combines both sets into the final ranking.
 
     Args:
         client:        Qdrant async client
@@ -68,10 +77,11 @@ async def search(
     Returns:
         List of SearchResult ordered by RRF score (best first).
     """
-    # 1. Embed query for dense retrieval
+    # 1. Build both query representations
     dense_vector = embed_query(query)
+    sparse_vector = to_sparse_vector(query)
 
-    # 2. Filter: restrict to this repository only
+    # 2. Repository-scoped filter — enforces multi-tenant isolation
     repo_filter = Filter(
         must=[
             FieldCondition(
@@ -81,17 +91,17 @@ async def search(
         ]
     )
 
-    # 4. Run dense semantic search using query_points (async method)
-    query_result = await client.query_points(
-        collection_name=COLLECTION,
-        query=dense_vector,
-        limit=top_k,
-        query_filter=repo_filter,
-        with_payload=True,
+    # 3. Two independent searches + manual RRF fusion.
+    #    Using the stable client.search() API (works across all server versions)
+    #    instead of query_points+Prefetch which requires qdrant-server >=1.10.
+    dense_hits, sparse_hits = await _search_dense_sparse(
+        client, dense_vector, sparse_vector, repo_filter
     )
-    results = query_result.points
 
-    # 5. Convert to SearchResult objects
+    # 4. Merge with Reciprocal Rank Fusion then truncate to top_k
+    results = _rrf_merge(dense_hits, sparse_hits, top_k)
+
+    # 5. Convert Qdrant scored points to structured SearchResult objects
     hits = []
     for point in results:
         p = point.payload or {}
@@ -110,7 +120,55 @@ async def search(
         ))
 
     log.debug(
-        "Hybrid search for %r in repo %s → %d results",
+        "Hybrid search (dense+sparse RRF) for %r in repo %s → %d results",
         query[:60], repository_id, len(hits),
     )
     return hits
+
+
+async def _search_dense_sparse(
+    client: AsyncQdrantClient,
+    dense_vector: List[float],
+    sparse_vector,
+    repo_filter: Filter,
+) -> Tuple[list, list]:
+    """Run dense and sparse searches in parallel via query_points, return both hit lists."""
+    import asyncio
+
+    dense_task = client.query_points(
+        collection_name=COLLECTION,
+        query=dense_vector,
+        using="",
+        query_filter=repo_filter,
+        limit=PREFETCH_LIMIT,
+        with_payload=True,
+    )
+    sparse_task = client.query_points(
+        collection_name=COLLECTION,
+        query=sparse_vector,
+        using="text",
+        query_filter=repo_filter,
+        limit=PREFETCH_LIMIT,
+        with_payload=True,
+    )
+    dense_result, sparse_result = await asyncio.gather(dense_task, sparse_task)
+    return dense_result.points, sparse_result.points
+
+
+def _rrf_merge(dense_hits: list, sparse_hits: list, top_k: int) -> list:
+    """Reciprocal Rank Fusion of two ranked hit lists."""
+    scores: Dict[str, float] = {}
+    by_id: Dict[str, object] = {}
+
+    for rank, point in enumerate(dense_hits, start=1):
+        pid = str(point.id)
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (RRF_K + rank)
+        by_id[pid] = point
+
+    for rank, point in enumerate(sparse_hits, start=1):
+        pid = str(point.id)
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (RRF_K + rank)
+        by_id[pid] = point
+
+    ranked = sorted(scores.keys(), key=lambda pid: scores[pid], reverse=True)
+    return [by_id[pid] for pid in ranked[:top_k]]

@@ -120,3 +120,46 @@ export interface ChatAskResponse {
   questions_today: number
   questions_in_session: number
 }
+
+// ── Change Impact Analysis ────────────────────────────────────────────────────
+
+export interface AffectedEndpoint {
+  method: string | null
+  path: string | null
+  file_path: string
+  function_name: string | null
+}
+
+export type RiskLevel = 'high' | 'medium' | 'low'
+
+export interface ImpactResult {
+  symbol: string
+  matched_file: string | null
+  risk: RiskLevel
+  direct_dependents: string[]
+  transitive_dependents: string[]
+  affected_endpoints: AffectedEndpoint[]
+  tests_to_run: string[]
+  total_impact: number
+  summary: string
+}
+
+// ── RAG Evaluation ────────────────────────────────────────────────────────────
+
+export interface QuestionResult {
+  question: string
+  endpoint: string
+  expected_file: string
+  retrieved_files: string[]
+  hit: boolean
+  rank: number | null
+  reciprocal_rank: number
+}
+
+export interface EvalReport {
+  recall_at_5: number
+  mrr: number
+  total_questions: number
+  passed: number
+  results: QuestionResult[]
+}

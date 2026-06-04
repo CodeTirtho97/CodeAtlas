@@ -109,3 +109,4 @@ desktop.ini
 
 # ─── Project internals ────────────────────────────────────────────────────────
 Project_Spec.md
+*.jsonl

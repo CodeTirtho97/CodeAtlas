@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import init_db, close_db, get_session
 from app.core.qdrant import init_qdrant
-from app.api.routes import auth, repos, query, chat
+from app.api.routes import auth, repos, query, chat, impact, eval
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -63,6 +63,8 @@ app.include_router(auth.router)
 app.include_router(repos.router)
 app.include_router(query.router)
 app.include_router(chat.router)
+app.include_router(impact.router)
+app.include_router(eval.router)
 
 
 @app.get("/health")

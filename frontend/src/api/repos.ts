@@ -1,5 +1,5 @@
 import client from './client'
-import type { Repository, IngestionJob, IngestionStatus } from '../types'
+import type { Repository, IngestionJob, IngestionStatus, ImpactResult, EvalReport } from '../types'
 
 export const reposApi = {
   list: async (): Promise<Repository[]> => {
@@ -25,5 +25,15 @@ export const reposApi = {
 
   delete: async (repoId: string): Promise<void> => {
     await client.delete(`/repos/${repoId}`)
+  },
+
+  analyzeImpact: async (repoId: string, symbol: string): Promise<ImpactResult> => {
+    const r = await client.post(`/repos/${repoId}/impact`, { symbol })
+    return r.data
+  },
+
+  runEval: async (repoId: string): Promise<EvalReport> => {
+    const r = await client.post(`/repos/${repoId}/eval/run`)
+    return r.data
   },
 }

@@ -1,10 +1,10 @@
 # CodeAtlas
 
-> **Turn any GitHub repository into a searchable knowledge graph.**
+> **New codebase? Own it in minutes.**
 
 <img width="1437" height="720" alt="image" src="https://github.com/user-attachments/assets/6465918e-711c-4ec2-b637-fe614959a62e" />
 
-CodeAtlas is an open-source, AI-powered repository intelligence platform that helps developers understand unfamiliar codebases fast — using RAG, semantic code search, multi-turn chat, and architecture-aware reasoning.
+CodeAtlas is an open-source, AI-powered repository intelligence platform. Paste any public GitHub URL and instantly get a guided onboarding path, visual dependency map, full API reference, change impact analysis, and an AI that answers architecture questions cited back to the exact file and line.
 
 Instead of reading docs manually or asking teammates, CodeAtlas constructs a structured knowledge base from any public GitHub repository and lets you ask questions like:
 
@@ -16,14 +16,14 @@ Instead of reading docs manually or asking teammates, CodeAtlas constructs a str
 
 ## Features
 
-- **Semantic Code Search** — Hybrid vector + BM25 keyword search across your entire repository
-- **Multi-Turn Chat** — Persistent chat sessions with full conversation history and cited answers
-- **Natural Language Q&A** — Ask architecture, flow, and dependency questions in plain English
-- **Auto-Generated Summary** — Purpose, tech stack, architecture, and entry points — generated on ingest
-- **Developer Onboarding Guide** — Step-by-step guide with files to read first and core workflows
-- **API Endpoint Discovery** — Automatically extract all routes from source code (no LLM)
-- **File Dependency Graph** — See what each file imports and what imports it
-- **Cited Answers** — Every answer links back to the exact file, function, and line range it came from
+- **Auto Onboarding Guide** — Prioritised reading path, key services, and core workflows generated on ingest
+- **API Endpoint Discovery** — Every route and HTTP method extracted via Tree-sitter AST — no LLM, no annotations
+- **Interactive Dependency Map** — Visual cluster graph of every import relationship; click any node to focus its connections
+- **Change Impact Analysis** — Type any function, class, or file to instantly see every file that depends on it
+- **Architecture-Aware Q&A** — Ask anything in plain English; every answer cites the exact file, function, and line range
+- **AI Answer Evaluation** — Run a retrieval benchmark (Recall@5 + MRR) to check how accurately the AI finds the right code
+- **Hybrid Search** — Dense vector + BM25 sparse search merged with manual Reciprocal Rank Fusion (k=60)
+- **Multi-Turn Chat** — Persistent sessions with full conversation history
 - **Multi-Language Support** — Full AST parsing for Python, JavaScript, TypeScript, Java, Go; fallback chunking for all others
 
 ---
@@ -33,16 +33,16 @@ Instead of reading docs manually or asking teammates, CodeAtlas constructs a str
 | Layer | Technology |
 |---|---|
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Graph Visualisation | @xyflow/react (React Flow), dagre (hierarchical layout) |
 | Backend | FastAPI, Python 3.11, SQLAlchemy (async) |
 | Auth | GitHub OAuth (Authlib) + JWT |
 | Relational DB | PostgreSQL 16 |
-| Vector DB | Qdrant (dense + BM25 hybrid search) |
-| Embeddings | Google text-embedding-004 (3072-dim) |
-| LLM | Gemini API (Google AI Studio) |
+| Vector DB | Qdrant (dense + sparse; manual RRF fusion) |
+| Embeddings | gemini-embedding-001 (3072-dim) |
+| LLM | Gemini 2.0 Flash (Google AI Studio) |
 | Code Parsing | Tree-sitter (AST-level semantic chunking) |
-| Dependency Analysis | NetworkX |
-| Containerization | Docker + Docker Compose |
-| Deployment | Vercel (frontend) + Railway (backend) |
+| Dependency Analysis | NetworkX (directed import graph, hub detection) |
+| Containerisation | Docker + Docker Compose |
 
 ---
 
@@ -55,23 +55,22 @@ Browser (React + TypeScript + Tailwind)
          ▼
 FastAPI Backend
          │
-    ┌────┴─────────────────────────────┐
-    │                                  │
-    ▼                                  ▼
-PostgreSQL                          Qdrant
-(users, repos,                  (code embeddings,
- chunks, chat)                   hybrid search)
-    │                                  │
-    └────────────┬─────────────────────┘
-                 │
-         ┌───────┴────────┐
-         ▼                ▼
-   Gemini API      text-embedding-004
-  (answer gen)     (vector indexing)
-         │
-         ▼
-   Ingestion Pipeline
-    GitPython → Tree-sitter → NetworkX
+    ┌────┴──────────────────────────────────────┐
+    │                                           │
+    ▼                                           ▼
+PostgreSQL                                   Qdrant
+(users, repos,                         (dense + sparse vectors,
+ chunks, chat, jobs)                    manual RRF retrieval)
+    │                                           │
+    └──────────────┬────────────────────────────┘
+                   │
+       ┌───────────┼───────────────┐
+       ▼           ▼               ▼
+ Gemini API   gemini-         Analysis Services
+ (answers)  embedding-001    (NetworkX dep graph,
+            (indexing)        Tree-sitter endpoints,
+                              Impact analysis,
+                              Retrieval eval)
 ```
 
 ---
@@ -91,8 +90,8 @@ PostgreSQL                          Qdrant
 ### Step 1 — Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/codeatlas.git
-cd codeatlas
+git clone https://github.com/CodeTirtho97/CodeAtlas.git
+cd CodeAtlas
 ```
 
 ### Step 2 — Create a GitHub OAuth App
@@ -109,7 +108,7 @@ cd codeatlas
 
 1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
 2. Click **Create API key**
-3. Copy the key (used for both Gemini LLM and text-embedding-004 — same key)
+3. Copy the key (used for both Gemini Flash and gemini-embedding-001 — same key)
 
 ### Step 4 — Configure Environment Variables
 
@@ -196,22 +195,25 @@ The ingestion pipeline runs in the background. A progress bar tracks each stage:
 1. Cloning the repository
 2. Filtering files (excludes vendor, build artifacts, etc.)
 3. Parsing code (Tree-sitter AST)
-4. Generating embeddings (text-embedding-004)
+4. Generating embeddings (gemini-embedding-001)
 5. Storing vectors in Qdrant + metadata in PostgreSQL
 6. Building the dependency graph (NetworkX)
-7. Extracting API endpoints (Tree-sitter, no LLM)
+7. Extracting API endpoints (Tree-sitter — no LLM)
 8. Generating repository summary (Gemini)
 9. Generating the onboarding guide (Gemini)
 
 ### 3. Explore the Dashboard
 
-Once complete, the dashboard provides five tabs:
+Once complete, the dashboard provides six tabs:
 
-- **Overview** — Purpose, tech stack, architecture, and entry points
-- **Ask AI** — Multi-turn chat with full session history and cited sources
-- **Guide** — Step-by-step learning path and core workflows for new developers
-- **API Map** — All discovered HTTP endpoints, filterable by method and path
-- **Dependencies** — File-level import/export graph with hub detection
+| Tab | What it does |
+|---|---|
+| **Overview** | Purpose, tech stack, architecture description, entry points, and quick navigation |
+| **Understand** | Step-by-step onboarding guide — files to read first and core workflows |
+| **Explore** | All discovered API endpoints + interactive dependency map with cluster tabs |
+| **Ask AI** | Multi-turn chat with persistent history and cited answers |
+| **Impact Area** | Type any function, class, or file — see every file that depends on it |
+| **Evaluate** | Run a retrieval benchmark to check AI answer accuracy (Recall@5 + MRR) |
 
 ### 4. Ask Questions
 
@@ -233,7 +235,17 @@ Sources:
   ► db/models.py — User                    [L5–28]
 ```
 
-Chat sessions are persistent — return to any session to continue the conversation. Each session supports up to **15 questions**; create multiple sessions per repository as needed.
+### 5. Check Change Impact
+
+Go to the **Impact Area** tab and type any symbol or file path:
+
+```
+UserService
+auth/service.py
+POST /login
+```
+
+CodeAtlas traces every file that transitively depends on it — so you know exactly what will break before touching a line.
 
 ---
 
@@ -247,86 +259,94 @@ codeatlas/
 │   │   ├── api/routes/
 │   │   │   ├── auth.py                    # GitHub OAuth login/callback/me
 │   │   │   ├── repos.py                   # Ingest, list, get, delete repos
-│   │   │   ├── query.py                   # Single-turn Q&A (deprecated)
-│   │   │   └── chat.py                    # Multi-turn chat sessions + Q&A
+│   │   │   ├── chat.py                    # Multi-turn chat sessions + Q&A
+│   │   │   ├── impact.py                  # Change impact analysis endpoint
+│   │   │   └── eval.py                    # Retrieval evaluation endpoint
 │   │   ├── core/
 │   │   │   ├── config.py                  # Pydantic settings (validated env vars)
 │   │   │   ├── database.py                # Async SQLAlchemy engine + session
 │   │   │   └── qdrant.py                  # Qdrant client + collection init
 │   │   ├── models/
 │   │   │   ├── db/                        # SQLAlchemy ORM models
-│   │   │   │   ├── base.py                # BaseModel (id, created_at, updated_at)
+│   │   │   │   ├── base.py
 │   │   │   │   ├── user.py                # GitHub user + rate limiting
 │   │   │   │   ├── repository.py          # Repo metadata + summary/guide JSON
-│   │   │   │   ├── file.py                # Source file metadata
 │   │   │   │   ├── chunk.py               # Code chunks (semantic units)
-│   │   │   │   ├── question.py            # Single-turn Q&A history (deprecated)
 │   │   │   │   ├── ingestion_job.py       # Ingestion job progress tracking
-│   │   │   │   ├── chat_session.py        # Chat session
-│   │   │   │   └── chat_message.py        # Chat messages
+│   │   │   │   ├── chat_session.py
+│   │   │   │   └── chat_message.py
 │   │   │   └── schemas/                   # Pydantic request/response schemas
-│   │   │       ├── auth.py
-│   │   │       ├── repository.py
-│   │   │       ├── query.py
-│   │   │       └── chat.py
 │   │   └── services/
 │   │       ├── ingestion/                 # Clone → parse → embed → store
-│   │       │   ├── pipeline.py            # 12-step async orchestrator
+│   │       │   ├── pipeline.py            # Async orchestrator
 │   │       │   ├── cloner.py              # GitPython repo clone
 │   │       │   ├── file_filter.py         # Exclude vendor/build artifacts
 │   │       │   ├── parser.py              # AST parsing dispatcher
 │   │       │   ├── parsers/               # Per-language Tree-sitter parsers
-│   │       │   │   ├── python_parser.py   # FastAPI/Flask routes
-│   │       │   │   ├── js_parser.py       # Express routes
-│   │       │   │   ├── ts_parser.py       # TypeScript + typed exports
-│   │       │   │   ├── java_parser.py     # Spring @RestController
-│   │       │   │   ├── go_parser.py       # chi/gin patterns
-│   │       │   │   └── fallback_parser.py # Line-based chunking
-│   │       │   ├── embedder.py            # Google text-embedding-004 calls
+│   │       │   │   ├── python_parser.py
+│   │       │   │   ├── js_parser.py
+│   │       │   │   ├── ts_parser.py
+│   │       │   │   ├── java_parser.py
+│   │       │   │   ├── go_parser.py
+│   │       │   │   └── fallback_parser.py
+│   │       │   ├── embedder.py            # gemini-embedding-001 calls
 │   │       │   └── store.py               # Qdrant + PostgreSQL persistence
 │   │       ├── search/
-│   │       │   ├── retriever.py           # Hybrid search (dense + BM25 RRF)
-│   │       │   └── sparse.py              # BM25-like tokenizer
+│   │       │   ├── retriever.py           # Hybrid search: 2× query_points + manual RRF
+│   │       │   └── sparse.py              # BM25-like feature-hash tokenizer
 │   │       ├── generation/
 │   │       │   ├── qa.py                  # LLM Q&A with context + chat history
-│   │       │   ├── summarizer.py          # Purpose, stack, architecture
+│   │       │   ├── summarizer.py          # Purpose, stack, architecture summary
 │   │       │   └── onboarding.py          # Step-by-step learning guide
-│   │       └── analysis/
-│   │           ├── api_extractor.py       # HTTP endpoint discovery
-│   │           └── dependency_graph.py    # Import graph via NetworkX
-│   ├── tests/
-│   │   ├── unit/                          # Unit tests
-│   │   ├── integration/                   # Integration tests (require services)
-│   │   └── benchmarks/                   # Retrieval performance benchmarks
+│   │       ├── analysis/
+│   │       │   ├── api_extractor.py       # HTTP endpoint discovery (Tree-sitter)
+│   │       │   ├── dependency_graph.py    # Import graph via NetworkX
+│   │       │   └── impact.py             # Transitive dependency impact analysis
+│   │       └── evaluation/
+│   │           └── retrieval_eval.py      # Recall@5 + MRR benchmark runner
 │   ├── alembic/                           # DB migration scripts
-│   ├── pyproject.toml                     # Dependencies + tool config
+│   ├── pyproject.toml
 │   ├── Dockerfile
+│   ├── .dockerignore
 │   └── .env.example
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── main.tsx
 │   │   ├── App.tsx                        # Router + ProtectedRoute wrapper
 │   │   ├── api/
 │   │   │   ├── client.ts                  # Axios instance with JWT injection
 │   │   │   ├── repos.ts                   # Repository CRUD + ingestion
-│   │   │   ├── query.ts                   # Single-turn Q&A (deprecated)
 │   │   │   └── chat.ts                    # Chat sessions + multi-turn Q&A
 │   │   ├── context/
-│   │   │   └── AuthContext.tsx            # Auth state (Context API + useAuth hook)
+│   │   │   └── AuthContext.tsx
 │   │   ├── pages/
-│   │   │   ├── LandingPage.tsx            # Unauthenticated homepage + repo list
-│   │   │   ├── CallbackPage.tsx           # GitHub OAuth redirect handler
-│   │   │   ├── DashboardPage.tsx          # 5-tab repository dashboard
+│   │   │   ├── LandingPage.tsx
+│   │   │   ├── CallbackPage.tsx
+│   │   │   ├── DashboardPage.tsx          # 6-tab repository dashboard
 │   │   │   ├── IngestionPage.tsx          # Real-time ingestion progress
-│   │   │   └── ArchitecturePage.tsx       # Architecture explanation
-│   │   ├── components/
-│   │   │   ├── Header.tsx                 # Top nav (logo, user menu, logout)
-│   │   │   ├── Badge.tsx                  # Tech stack badge renderer
-│   │   │   └── Spinner.tsx                # Loading spinner
-│   │   ├── hooks/                         # Custom React hooks
-│   │   └── types/
-│   │       └── index.ts                   # TypeScript interface definitions
+│   │   │   └── ArchitecturePage.tsx
+│   │   └── components/
+│   │       ├── Header.tsx
+│   │       ├── AppFooter.tsx
+│   │       ├── dashboard/
+│   │       │   ├── OverviewPanel.tsx
+│   │       │   ├── UnderstandPanel.tsx
+│   │       │   ├── ExplorePanel.tsx       # API map + dependency graph
+│   │       │   ├── DependencyGraph.tsx    # React Flow + dagre cluster graph
+│   │       │   ├── AskAIWorkspace.tsx
+│   │       │   ├── ImpactWorkbench.tsx    # Change impact analysis UI
+│   │       │   └── EvalDashboard.tsx      # Retrieval evaluation UI
+│   │       ├── landing/
+│   │       │   ├── AnalyzeForm.tsx
+│   │       │   ├── RepoCard.tsx
+│   │       │   ├── RepoSection.tsx
+│   │       │   └── FeaturesGrid.tsx
+│   │       └── architecture/
+│   │           ├── PipelineSection.tsx
+│   │           ├── HybridSearchSection.tsx
+│   │           ├── FeaturesUnlockedSection.tsx
+│   │           ├── BenchmarksSection.tsx
+│   │           └── TechStackSection.tsx
 │   ├── package.json
 │   ├── vite.config.ts
 │   ├── tailwind.config.js
@@ -354,7 +374,6 @@ uv venv
 source .venv/bin/activate   # macOS/Linux
 .venv\Scripts\activate      # Windows
 
-# Install all dependencies (including dev)
 uv pip install -e ".[dev]"
 
 # Run the development server
@@ -365,7 +384,6 @@ uvicorn app.main:app --reload
 
 ```bash
 cd frontend
-
 npm install
 npm run dev
 ```
@@ -377,68 +395,34 @@ npm run dev
 cd backend
 pytest tests/unit -v
 
-# With coverage report
+# With coverage
 pytest --cov=app --cov-report=html
 
 # Integration tests (requires PostgreSQL + Qdrant running)
 pytest tests/integration -v -m integration
-
-# Performance benchmarks
-pytest tests/benchmarks -v
 
 # Frontend
 cd frontend
 npm run test
 ```
 
-### Code Quality
-
-```bash
-# Backend — format, lint, type-check
-cd backend
-black app
-pylint app
-mypy app
-
-# Frontend — lint
-cd frontend
-npm run lint
-```
-
 ### Useful Docker Commands
 
 ```bash
-# Start all services
-docker-compose up
-
-# Start in background
-docker-compose up -d
-
-# Rebuild after dependency changes
-docker-compose build --no-cache
-
-# View logs
-docker-compose logs -f backend
-docker-compose logs -f frontend
-
-# Access the database directly
+docker-compose up                          # Start all services
+docker-compose up -d                       # Start in background
+docker-compose build --no-cache            # Rebuild after dependency changes
+docker-compose logs -f backend             # Stream backend logs
 docker-compose exec postgres psql -U codeatlas -d codeatlas_dev
-
-# Stop all services
-docker-compose down
-
-# Stop and remove volumes (wipes database and vector store)
-docker-compose down -v
+docker-compose down                        # Stop all services
+docker-compose down -v                     # Stop and wipe all volumes
 ```
 
 ---
 
 ## API Reference
 
-Interactive API documentation is available at:
-
-- **Swagger UI:** http://localhost:8000/api/docs
-- **ReDoc:** http://localhost:8000/api/redoc
+Interactive docs: **http://localhost:8000/api/docs** (Swagger UI)
 
 ### Auth
 
@@ -447,7 +431,6 @@ Interactive API documentation is available at:
 | `GET` | `/health` | Service health check |
 | `GET` | `/auth/login` | Initiate GitHub OAuth flow |
 | `POST` | `/auth/callback` | Exchange OAuth code for JWT |
-| `POST` | `/auth/logout` | Logout (clears client token) |
 | `GET` | `/auth/me` | Get current authenticated user |
 
 ### Repositories
@@ -460,22 +443,22 @@ Interactive API documentation is available at:
 | `GET` | `/repos/ingest/{job_id}/status` | Poll ingestion progress |
 | `DELETE` | `/repos/{id}` | Delete repository + vectors |
 
-### Chat (Multi-Turn Q&A)
+### Chat
 
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/chat/sessions` | Create a new chat session |
-| `GET` | `/chat/sessions` | List sessions for a repository (`?repository_id=...`) |
-| `GET` | `/chat/sessions/{session_id}/messages` | Get all messages in a session |
-| `POST` | `/chat/sessions/{session_id}/ask` | Ask a question in a session |
-| `DELETE` | `/chat/sessions/{session_id}` | Delete a chat session |
+| `GET` | `/chat/sessions` | List sessions for a repository |
+| `GET` | `/chat/sessions/{id}/messages` | Get all messages in a session |
+| `POST` | `/chat/sessions/{id}/ask` | Ask a question in a session |
+| `DELETE` | `/chat/sessions/{id}` | Delete a chat session |
 
-### Single-Turn Q&A (deprecated)
+### Analysis
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/query` | Submit a standalone Q&A question |
-| `GET` | `/query/{id}` | Retrieve a previous answer |
+| `POST` | `/impact/{repo_id}` | Run change impact analysis for a symbol or file |
+| `POST` | `/eval/{repo_id}` | Run retrieval evaluation (Recall@5 + MRR) |
 
 ---
 
@@ -488,7 +471,7 @@ Interactive API documentation is available at:
 | `DATABASE_URL` | Yes | PostgreSQL async connection string |
 | `QDRANT_URL` | Yes | Qdrant server URL |
 | `QDRANT_API_KEY` | No | Qdrant Cloud API key (leave blank for local) |
-| `GOOGLE_API_KEY` | Yes | Google AI Studio key (Gemini + Embeddings) |
+| `GOOGLE_API_KEY` | Yes | Google AI Studio key (Gemini + gemini-embedding-001) |
 | `GITHUB_CLIENT_ID` | Yes | GitHub OAuth App Client ID |
 | `GITHUB_CLIENT_SECRET` | Yes | GitHub OAuth App Client Secret |
 | `JWT_SECRET` | Yes | Random secret for signing JWTs (min 32 chars) |
@@ -519,63 +502,47 @@ Interactive API documentation is available at:
 
 ## Roadmap
 
-### Phase 1 — Foundation ✅ Complete
-- Docker Compose infrastructure
-- FastAPI backend skeleton
-- GitHub OAuth authentication
-- SQLAlchemy models and Qdrant setup
-- React + TypeScript frontend scaffold
+### Phase 1 — Foundation ✅
+Docker Compose infrastructure, FastAPI backend, GitHub OAuth, SQLAlchemy + Qdrant setup, React + TypeScript scaffold
 
-### Phase 2 — Ingestion Pipeline ✅ Complete
-- Repository cloning (GitPython)
-- Code parsing (Tree-sitter — Python, JS, TS, Java, Go)
-- Semantic chunking (function / class / endpoint level)
-- Embedding generation (Google text-embedding-004)
-- Hybrid vector + BM25 storage (Qdrant)
-- Auto-generated repository summary and onboarding guide
-- API endpoint discovery (no LLM — pure Tree-sitter)
-- File dependency graph (NetworkX)
+### Phase 2 — Ingestion Pipeline ✅
+Repository cloning, Tree-sitter AST parsing (Python, JS, TS, Java, Go), semantic chunking, gemini-embedding-001 embeddings, hybrid vector + BM25 storage, auto-generated summary and onboarding guide, API endpoint discovery, NetworkX dependency graph
 
-### Phase 3 — Intelligence Layer ✅ Complete
-- Hybrid search (dense + BM25 with RRF fusion)
-- Multi-turn chat sessions with persistent history
-- Natural language Q&A with citations
-- Gemini integration for generation
+### Phase 3 — Intelligence Layer ✅
+Hybrid dense+sparse search with manual RRF fusion (k=60), multi-turn chat with persistent history, cited Q&A, Gemini 2.0 Flash integration
 
-### Phase 4 — Full Frontend ✅ Complete
-- 5-tab dashboard (Overview, Ask AI, Guide, API Map, Dependencies)
-- Real-time ingestion progress bar with live polling
-- Chat interface with session sidebar, typing indicator, and collapsible citations
-- Repository management (list, add, delete)
+### Phase 4 — Analysis Features ✅
+Interactive dependency graph with cluster tabs (React Flow + dagre), change impact analysis, AI answer quality evaluation (Recall@5 + MRR)
 
-### Phase 5 — Deployment ⏳ Planned
+### Phase 5 — Full Frontend ✅
+6-tab dashboard (Overview, Understand, Explore, Ask AI, Impact Area, Evaluate), real-time ingestion progress, chat interface with session history, repository management
+
+### Phase 6 — Deployment ⏳ Planned
 - Vercel (frontend)
 - Railway (backend)
 - Neon (PostgreSQL)
 - Qdrant Cloud
 
 ### V2 — Future
-- Dependency graph visualization (React Flow)
-- Impact analysis ("what breaks if X changes?")
-- Private repository support
-- Incremental re-indexing (diff-based)
-- Repository health insights
+- Private repository support (GitHub App installation flow)
+- Incremental re-indexing (diff-based — only changed files)
 - Multi-turn chat history search
+- Repository health insights
+- Additional language parsers (Rust, Ruby, C#, C++)
 
 ---
 
 ## Language Support
 
 ### Tier 1 — Full AST Parsing (Tree-sitter)
-Extracts functions, classes, methods, and endpoints with full metadata.
 
 | Language | Extensions | Endpoint Detection |
 |---|---|---|
-| Python | `.py` | FastAPI/Flask route decorators |
+| Python | `.py` | FastAPI / Flask route decorators |
 | JavaScript | `.js`, `.jsx` | Express `router.get/post` patterns |
 | TypeScript | `.ts`, `.tsx` | Express + typed exports |
 | Java | `.java` | `@RestController`, `@GetMapping` annotations |
-| Go | `.go` | `http.HandleFunc`, chi/gin router patterns |
+| Go | `.go` | `http.HandleFunc`, chi / gin router patterns |
 
 ### Tier 2 — Raw Fallback Chunking
 All other languages chunked by line count (100 lines max), stored as `chunk_type: raw`.
@@ -585,166 +552,63 @@ All other languages chunked by line count (100 lines max), stored as `chunk_type
 
 ---
 
-## Contributing
-
-Contributions are welcome! Here's how to get started.
-
-### 1. Fork and Clone
-
-```bash
-git clone https://github.com/your-username/codeatlas.git
-cd codeatlas
-```
-
-### 2. Create a Feature Branch
-
-```bash
-git checkout -b feature/your-feature-name
-# or
-git checkout -b fix/bug-description
-```
-
-### 3. Set Up Development Environment
-
-Follow the [Getting Started](#getting-started) guide above.
-
-### 4. Make Your Changes
-
-- Write code following the existing patterns
-- Add tests for new functionality
-- Keep commits small and focused
-
-### 5. Code Quality Checks
-
-```bash
-# Backend
-cd backend
-black app         # format
-pylint app        # lint
-mypy app          # type check
-pytest            # tests
-
-# Frontend
-cd frontend
-npm run lint      # lint
-npm run test      # tests
-```
-
-### 6. Submit a Pull Request
-
-- Fill out the PR template
-- Describe what changed and why
-- Reference any related issues
-
-### Areas Looking for Contributions
-
-- Additional language parsers (Rust, Ruby, C++)
-- Test coverage improvements
-- Frontend accessibility (WCAG 2.1 AA)
-- Documentation improvements
-- Performance optimizations
-- Bug fixes
-
-### Code Style
-
-**Backend (Python):**
-- Formatter: [Black](https://github.com/psf/black) (`line-length = 100`)
-- Linter: [Pylint](https://pylint.org/)
-- Type checker: [MyPy](https://mypy-lang.org/)
-- Docstrings: Google style (only where non-obvious)
-
-**Frontend (TypeScript/React):**
-- Formatter: Prettier
-- Linter: ESLint
-- Strict TypeScript mode enabled
-
----
-
 ## Troubleshooting
 
 ### "Missing or invalid required setting" on backend startup
-
 Ensure all required env vars are set in `backend/.env`. The app validates them at startup.
 
-```bash
-cat backend/.env
-```
-
 ### Docker container fails to start
-
 ```bash
-# Check logs
 docker-compose logs backend
-docker-compose logs postgres
-
-# Rebuild fresh
 docker-compose down -v
 docker-compose build --no-cache
 docker-compose up
 ```
 
 ### GitHub OAuth callback fails
-
-- Verify the callback URL in your GitHub OAuth App matches exactly: `http://localhost:3000/callback`
+- Verify callback URL in your GitHub OAuth App matches exactly: `http://localhost:3000/callback`
 - Check `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `backend/.env`
-- Ensure `FRONTEND_URL=http://localhost:3000` is set in `backend/.env`
+- Ensure `FRONTEND_URL=http://localhost:3000` is set
 
 ### Port already in use
-
 ```bash
 # macOS/Linux
-lsof -i :8000    # Find what's using the port
-kill -9 <PID>
+lsof -i :8000 && kill -9 <PID>
 
 # Windows
 netstat -ano | findstr :8000
 taskkill /PID <PID> /F
 ```
 
-### Qdrant collection error on startup
-
-```bash
-# Reset Qdrant data
-docker-compose down -v
-docker-compose up
-```
-
 ### Ingestion stuck or failed
-
 ```bash
-# Check backend logs for the error
 docker-compose logs -f backend
-
-# Verify your GOOGLE_API_KEY is valid and has available quota
-# Google AI Studio free tier is generous but may throttle on large repos
+# Verify GOOGLE_API_KEY is valid and has available quota
 ```
+
+### Qdrant 400 errors on search
+Ensure you're running qdrant-client ≥ 1.18.0. CodeAtlas uses two separate `query_points` calls with manual RRF — the older native Prefetch+Fusion API is not used.
 
 ---
 
 ## License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
 ## Acknowledgments
 
 - [FastAPI](https://fastapi.tiangolo.com/) — Async Python web framework
-- [Qdrant](https://qdrant.tech/) — Vector database with built-in BM25
-- [Tree-sitter](https://tree-sitter.github.io/) — Language-agnostic code parser
-- [Google AI Studio](https://aistudio.google.com/) — Free tier LLM and embeddings
+- [Qdrant](https://qdrant.tech/) — Vector database with dense + sparse support
+- [Tree-sitter](https://tree-sitter.github.io/) — Language-agnostic AST parser
+- [Google AI Studio](https://aistudio.google.com/) — Gemini Flash + gemini-embedding-001
+- [React Flow (@xyflow/react)](https://reactflow.dev/) — Interactive graph visualisation
+- [dagre](https://github.com/dagrejs/dagre) — Hierarchical graph layout
+- [NetworkX](https://networkx.org/) — Python graph analysis
 - [Vite](https://vitejs.dev/) — Frontend build tool
 - [uv](https://docs.astral.sh/uv/) — Fast Python package manager
-- [NetworkX](https://networkx.org/) — Graph analysis library
 
 ---
 
-## Support
-
-- **Bug reports:** [Open an issue](https://github.com/your-username/codeatlas/issues)
-- **Feature requests:** [Open a discussion](https://github.com/your-username/codeatlas/discussions)
-- **Security vulnerabilities:** Email directly (do not open a public issue)
-
----
-
-*Built with the goal of making every codebase as easy to understand as a well-documented library.*
+*Built with the goal of making every codebase as navigable as one you wrote yourself.*

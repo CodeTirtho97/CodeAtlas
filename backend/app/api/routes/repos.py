@@ -1,6 +1,6 @@
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -251,7 +251,7 @@ async def _reset_daily_counter_if_needed(
     session: AsyncSession, user: User
 ) -> None:
     """Reset repos_analyzed_today if last reset was on a different UTC date."""
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     last_reset = user.last_reset_at
 
     if last_reset is None or last_reset.date() < now.date():
