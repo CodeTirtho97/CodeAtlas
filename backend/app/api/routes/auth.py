@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Header, Cookie, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from datetime import datetime, timedelta
@@ -8,13 +9,29 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.db import User
-from app.models.schemas import LoginResponse, UserResponse, LoginRequest
+from app.models.schemas import UserResponse, LoginRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class CallbackRequest(BaseModel):
     code: str
+
+
+def _cookie_kwargs(expire: bool = False) -> dict:
+    """Return Set-Cookie attributes that match the deployment environment.
+
+    Dev  (HTTP localhost)  → SameSite=Lax,  Secure=False
+    Prod (HTTPS)           → SameSite=None, Secure=True   (cross-origin safe)
+    """
+    is_https = settings.FRONTEND_URL.startswith("https://")
+    return {
+        "httponly": True,
+        "secure": is_https,
+        "samesite": "none" if is_https else "lax",
+        "max_age": 0 if expire else settings.JWT_EXPIRY_DAYS * 24 * 60 * 60,
+        "path": "/",
+    }
 
 
 @router.get("/login")
@@ -31,8 +48,12 @@ async def login():
 
 
 @router.post("/callback")
-async def callback(body: CallbackRequest, session: AsyncSession = Depends(get_session)):
-    """Handle GitHub OAuth callback — exchanges code for JWT."""
+async def callback(
+    body: CallbackRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+):
+    """Handle GitHub OAuth callback — exchanges code for JWT set as httpOnly cookie."""
     code = body.code
 
     async with httpx.AsyncClient() as client:
@@ -95,7 +116,6 @@ async def callback(body: CallbackRequest, session: AsyncSession = Depends(get_se
         await session.commit()
         await session.refresh(user)
     else:
-        # Update email and username in case they changed
         user.email = email
         user.github_username = github_username
         await session.commit()
@@ -109,43 +129,53 @@ async def callback(body: CallbackRequest, session: AsyncSession = Depends(get_se
     }
     jwt_token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
-    user_response = UserResponse(
-        id=user.id,
-        github_username=user.github_username,
-        email=user.email,
-        github_id=user.github_id,
-    )
+    # Set token as httpOnly cookie — never exposed to JavaScript
+    response.set_cookie(key="access_token", value=jwt_token, **_cookie_kwargs())
 
-    return LoginResponse(access_token=jwt_token, user=user_response)
+    return {
+        "user": UserResponse(
+            id=user.id,
+            github_username=user.github_username,
+            email=user.email,
+            github_id=user.github_id,
+        )
+    }
 
 
 @router.post("/logout")
-async def logout():
-    """Logout endpoint (client-side token deletion)."""
+async def logout(response: Response):
+    """Clear the auth cookie server-side."""
+    response.delete_cookie(key="access_token", **_cookie_kwargs(expire=True))
     return {"message": "Logged out successfully"}
 
 
 async def get_current_user_dependency(
-    token: str = None, session: AsyncSession = Depends(get_session)
+    authorization: Optional[str] = Header(None),
+    access_token: Optional[str] = Cookie(None),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
-    """Dependency to get current user from JWT token."""
+    """FastAPI dependency: authenticate via httpOnly cookie or Bearer header fallback."""
+    token = access_token
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:]
+
     if not token:
-        raise HTTPException(status_code=403, detail="No token provided")
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
         user_id = payload.get("user_id")
         if not user_id:
-            raise HTTPException(status_code=403, detail="Invalid token")
+            raise HTTPException(status_code=401, detail="Invalid token")
 
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise HTTPException(status_code=401, detail="User not found")
 
         return user
     except jwt.JWTError:
-        raise HTTPException(status_code=403, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 @router.get("/me", response_model=UserResponse)

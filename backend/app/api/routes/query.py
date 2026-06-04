@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -20,11 +20,10 @@ router = APIRouter(prefix="/query", tags=["queries"])
 @router.post("", response_model=QueryResponse)
 async def submit_query(
     request: QueryRequest,
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
-    authorization: str = Header(None),
 ) -> QueryResponse:
     """Submit a natural language question about a repository."""
-    current_user = await _get_user(authorization, session)
 
     # Validate question length
     question = request.question.strip()
@@ -80,11 +79,10 @@ async def submit_query(
 @router.get("/{question_id}", response_model=QueryResponse)
 async def get_question(
     question_id: str,
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
-    authorization: str = Header(None),
 ) -> QueryResponse:
     """Retrieve a previous question and answer by ID."""
-    current_user = await _get_user(authorization, session)
 
     result = await session.execute(
         select(Question).where(
@@ -105,13 +103,6 @@ async def get_question(
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async def _get_user(authorization: str | None, session: AsyncSession) -> User:
-    token = None
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:]
-    return await get_current_user_dependency(token=token, session=session)
-
 
 async def _get_indexed_repo(
     session: AsyncSession, repo_id: str, user_id

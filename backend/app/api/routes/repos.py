@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, Header
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -38,11 +38,10 @@ _GITHUB_URL_RE = re.compile(
 
 @router.get("", response_model=RepositoryListResponse)
 async def list_repos(
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
-    authorization: str = Header(None),
 ) -> RepositoryListResponse:
     """List user's repositories."""
-    current_user = await _get_user(authorization, session)
     result = await session.execute(
         select(Repository).where(Repository.user_id == current_user.id)
     )
@@ -53,12 +52,10 @@ async def list_repos(
 @router.get("/ingest/{job_id}/status")
 async def get_ingestion_status(
     job_id: str,
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
-    authorization: str = Header(None),
 ):
     """Poll ingestion job status."""
-    current_user = await _get_user(authorization, session)
-
     result = await session.execute(
         select(IngestionJob).where(IngestionJob.id == job_id)
     )
@@ -89,12 +86,10 @@ async def get_ingestion_status(
 async def ingest_repo(
     request: IngestRepoRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
-    authorization: str = Header(None),
 ) -> IngestionJobResponse:
     """Submit a GitHub repository for ingestion."""
-    current_user = await _get_user(authorization, session)
-
     # ── Validate URL ─────────────────────────────────────────────────────────
     github_url = request.github_url.rstrip("/")
     if not _GITHUB_URL_RE.match(github_url):
@@ -187,11 +182,10 @@ async def ingest_repo(
 @router.get("/{repo_id}", response_model=RepositoryResponse)
 async def get_repo(
     repo_id: str,
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
-    authorization: str = Header(None),
 ) -> RepositoryResponse:
     """Get single repository details including dashboard content."""
-    current_user = await _get_user(authorization, session)
     repo = await _get_repo_or_404(session, repo_id, current_user.id)
     return _repo_to_response(repo)
 
@@ -199,11 +193,10 @@ async def get_repo(
 @router.delete("/{repo_id}", response_model=RepositoryDeleteResponse)
 async def delete_repo(
     repo_id: str,
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
-    authorization: str = Header(None),
 ) -> RepositoryDeleteResponse:
     """Delete a repository — removes vectors from Qdrant and records from DB."""
-    current_user = await _get_user(authorization, session)
     repo = await _get_repo_or_404(session, repo_id, current_user.id)
 
     # Delete vectors from Qdrant first
@@ -211,7 +204,6 @@ async def delete_repo(
         qdrant_client = await get_qdrant_client()
         await delete_from_qdrant(qdrant_client, str(repo.id))
     except Exception as exc:
-        # Log but don't block deletion — DB records must still be cleaned up
         import logging
         logging.getLogger(__name__).warning(
             "Qdrant delete failed for repo %s: %s", repo_id, exc
@@ -224,13 +216,6 @@ async def delete_repo(
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async def _get_user(authorization: str | None, session: AsyncSession) -> User:
-    token = None
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:]
-    return await get_current_user_dependency(token=token, session=session)
-
 
 async def _get_repo_or_404(
     session: AsyncSession, repo_id: str, user_id

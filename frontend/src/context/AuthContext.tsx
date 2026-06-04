@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
+import apiClient from '../api/client'
 
 interface User {
   id: string
@@ -10,7 +11,7 @@ interface User {
 interface AuthContextType {
   user: User | null
   isAuthenticated: boolean
-  login: (user: User, token: string) => void
+  login: (user: User) => void
   logout: () => void
 }
 
@@ -20,32 +21,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
+  // Restore user profile from localStorage on mount.
+  // The JWT lives in an httpOnly cookie — we can't read it from JS.
+  // If the cookie has expired, the first API call will 401 and the
+  // interceptor in client.ts will clear localStorage and redirect home.
   useEffect(() => {
     const storedUser = localStorage.getItem('user')
-    const storedToken = localStorage.getItem('access_token')
-    if (storedUser && storedToken) {
+    if (storedUser) {
       try {
         setUser(JSON.parse(storedUser))
         setIsAuthenticated(true)
-      } catch (e) {
+      } catch {
         localStorage.removeItem('user')
-        localStorage.removeItem('access_token')
       }
     }
   }, [])
 
-  const login = (userData: User, token: string) => {
+  const login = (userData: User) => {
     setUser(userData)
     setIsAuthenticated(true)
     localStorage.setItem('user', JSON.stringify(userData))
-    localStorage.setItem('access_token', token)
   }
 
   const logout = () => {
     setUser(null)
     setIsAuthenticated(false)
     localStorage.removeItem('user')
-    localStorage.removeItem('access_token')
+    // Tell the server to clear the httpOnly cookie (fire-and-forget).
+    apiClient.post('/auth/logout').catch(() => {})
   }
 
   return (

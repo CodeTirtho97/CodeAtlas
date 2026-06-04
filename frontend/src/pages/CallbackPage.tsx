@@ -32,8 +32,8 @@ export default function CallbackPage() {
     const exchangeCode = async () => {
       try {
         const response = await apiClient.post('/auth/callback', { code })
-        const { access_token, user } = response.data
-        login(user, access_token)
+        const { user } = response.data
+        login(user)
         navigate('/', { replace: true })
       } catch (err: any) {
         const msg =

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -16,16 +16,8 @@ from app.models.schemas import (
     ChatAskRequest,
     ChatAskResponse,
 )
+from app.api.routes.auth import get_current_user_dependency
 from app.services.generation.qa import answer_with_history
-
-
-async def _get_user(authorization: str | None, session) -> User:
-    """Extract user from JWT token in Authorization header."""
-    from app.api.routes.auth import get_current_user_dependency
-    token = None
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:]
-    return await get_current_user_dependency(token=token, session=session)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -33,18 +25,13 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("/sessions", response_model=ChatSessionResponse)
 async def create_session(
     req: ChatSessionCreate,
-    authorization: str = Header(None),
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
 ):
     """Create a new chat session for a repository."""
-    user = await _get_user(authorization, session)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # Verify repo exists and user owns it
     repo_result = await session.execute(
         select(Repository).where(
-            (Repository.id == req.repository_id) & (Repository.user_id == user.id)
+            (Repository.id == req.repository_id) & (Repository.user_id == current_user.id)
         )
     )
     repo = repo_result.scalar_one_or_none()
@@ -55,7 +42,7 @@ async def create_session(
 
     chat_session = ChatSession(
         repository_id=req.repository_id,
-        user_id=user.id,
+        user_id=current_user.id,
         title="New Chat",
         message_count=0,
     )
@@ -69,19 +56,15 @@ async def create_session(
 @router.get("/sessions", response_model=list[ChatSessionResponse])
 async def list_sessions(
     repository_id: UUID,
-    authorization: str = Header(None),
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
 ):
     """List all chat sessions for a repository."""
-    user = await _get_user(authorization, session)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     result = await session.execute(
         select(ChatSession)
         .where(
             (ChatSession.repository_id == repository_id)
-            & (ChatSession.user_id == user.id)
+            & (ChatSession.user_id == current_user.id)
         )
         .order_by(ChatSession.created_at.desc())
     )
@@ -92,17 +75,13 @@ async def list_sessions(
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: UUID,
-    authorization: str = Header(None),
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
 ):
     """Delete a chat session and all its messages."""
-    user = await _get_user(authorization, session)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     result = await session.execute(
         select(ChatSession).where(
-            (ChatSession.id == session_id) & (ChatSession.user_id == user.id)
+            (ChatSession.id == session_id) & (ChatSession.user_id == current_user.id)
         )
     )
     chat_session = result.scalar_one_or_none()
@@ -118,18 +97,13 @@ async def delete_session(
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageResponse])
 async def get_messages(
     session_id: UUID,
-    authorization: str = Header(None),
+    current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
 ):
     """Get all messages in a chat session."""
-    user = await _get_user(authorization, session)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # Verify session ownership
     session_result = await session.execute(
         select(ChatSession).where(
-            (ChatSession.id == session_id) & (ChatSession.user_id == user.id)
+            (ChatSession.id == session_id) & (ChatSession.user_id == current_user.id)
         )
     )
     chat_session = session_result.scalar_one_or_none()
@@ -160,23 +134,17 @@ async def get_messages(
 async def ask_question(
     session_id: UUID,
     req: ChatAskRequest,
-    authorization: str = Header(None),
+    current_user: User = Depends(get_current_user_dependency),
     db_session: AsyncSession = Depends(get_session),
 ):
     """Ask a question in a chat session (with rate limiting and history)."""
-    user = await _get_user(authorization, db_session)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # Validate question length
     question = req.question.strip()
     if len(question) < 10 or len(question) > 1000:
         raise HTTPException(status_code=400, detail="Question must be 10-1000 characters")
 
-    # Verify session ownership and get repo info
     session_result = await db_session.execute(
         select(ChatSession).where(
-            (ChatSession.id == session_id) & (ChatSession.user_id == user.id)
+            (ChatSession.id == session_id) & (ChatSession.user_id == current_user.id)
         )
     )
     chat_session = session_result.scalar_one_or_none()
@@ -190,7 +158,7 @@ async def ask_question(
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
 
-    # Rate limiting: check messages per session
+    # Rate limiting: messages per session
     session_msg_count = await db_session.scalar(
         select(func.count()).select_from(ChatMessage)
         .where(
@@ -201,14 +169,14 @@ async def ask_question(
     if session_msg_count >= 15:
         raise HTTPException(status_code=429, detail="Session limit reached (15/15)")
 
-    # Rate limiting: check questions per day (UTC midnight, naive datetime to match DB)
+    # Rate limiting: questions per day (UTC midnight, naive datetime to match DB)
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     daily_msg_count = await db_session.scalar(
         select(func.count()).select_from(ChatMessage)
         .join(ChatSession)
         .where(
             (ChatMessage.role == "user")
-            & (ChatSession.user_id == user.id)
+            & (ChatSession.user_id == current_user.id)
             & (ChatMessage.created_at >= today_start)
         )
     )
@@ -224,12 +192,8 @@ async def ask_question(
     )
     prev_messages = list(reversed(prev_messages_result.scalars().all()))
 
-    history = [
-        {"role": m.role, "content": m.content}
-        for m in prev_messages
-    ]
+    history = [{"role": m.role, "content": m.content} for m in prev_messages]
 
-    # Get Qdrant client and call QA with history
     qdrant_client = await get_qdrant_client()
     try:
         qa_result = await answer_with_history(
@@ -242,7 +206,6 @@ async def ask_question(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"QA service error: {str(e)}")
 
-    # Create user message
     user_message = ChatMessage(
         session_id=session_id,
         role="user",
@@ -252,7 +215,6 @@ async def ask_question(
     db_session.add(user_message)
     await db_session.flush()
 
-    # Create assistant message
     assistant_message = ChatMessage(
         session_id=session_id,
         role="assistant",
@@ -261,7 +223,6 @@ async def ask_question(
     )
     db_session.add(assistant_message)
 
-    # Update session message count (only count user messages for rate limiting)
     chat_session.message_count += 1
     chat_session.updated_at = datetime.utcnow()
 
@@ -269,7 +230,6 @@ async def ask_question(
     await db_session.refresh(user_message)
     await db_session.refresh(assistant_message)
 
-    # Recount for response (count USER messages only, not assistant)
     new_session_msg_count = await db_session.scalar(
         select(func.count()).select_from(ChatMessage)
         .where(
@@ -282,7 +242,7 @@ async def ask_question(
         .join(ChatSession)
         .where(
             (ChatMessage.role == "user")
-            & (ChatSession.user_id == user.id)
+            & (ChatSession.user_id == current_user.id)
             & (ChatMessage.created_at >= today_start)
         )
     )
