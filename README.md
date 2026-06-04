@@ -2,7 +2,8 @@
 
 > **New codebase? Own it in minutes.**
 
-<img width="1437" height="720" alt="image" src="https://github.com/user-attachments/assets/6465918e-711c-4ec2-b637-fe614959a62e" />
+<img width="1578" height="787" alt="image" src="https://github.com/user-attachments/assets/a533bd9f-6076-41dd-b3a4-6311aa398c77" />
+
 
 CodeAtlas is an open-source, AI-powered repository intelligence platform. Paste any public GitHub URL and instantly get a guided onboarding path, visual dependency map, full API reference, change impact analysis, and an AI that answers architecture questions cited back to the exact file and line.
 
