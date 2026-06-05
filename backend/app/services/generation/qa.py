@@ -24,7 +24,16 @@ from app.services.search.retriever import SearchResult, search
 log = logging.getLogger(__name__)
 
 GEMINI_MODEL = "gemini-2.5-flash"
-DEFAULT_TOP_K = 8
+DEFAULT_TOP_K = 10
+
+# Reuse a single async client across all requests
+_gemini_client: Optional[genai.Client] = None
+
+def _get_gemini_client() -> genai.Client:
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+    return _gemini_client
 
 _QA_PROMPT = """\
 You are an expert on the {repo_name} codebase.
@@ -145,7 +154,7 @@ async def answer_question(
         context=context,
     )
 
-    raw = _call_gemini(prompt)
+    raw = await _call_gemini(prompt)
     if raw is None:
         return {
             "answer": "Unable to generate an answer at this time. Please try again.",
@@ -218,7 +227,7 @@ async def answer_with_history(
         context=context,
     )
 
-    raw = _call_gemini(prompt)
+    raw = await _call_gemini(prompt)
     if raw is None:
         return {
             "answer": "Unable to generate an answer at this time. Please try again.",
@@ -289,17 +298,20 @@ def _enrich_sources(
 
 # ─── Gemini Call ─────────────────────────────────────────────────────────────
 
-def _call_gemini(prompt: str) -> Optional[dict]:
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+async def _call_gemini(prompt: str) -> Optional[dict]:
+    client = _get_gemini_client()
 
     for attempt in range(1, 4):
         try:
-            response = client.models.generate_content(
+            response = await client.aio.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json",
                     temperature=0.1,
+                    # Disable extended thinking — context is already retrieved;
+                    # deep reasoning adds minutes of latency with no benefit here.
+                    thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
                 ),
             )
             return _parse_json(response.text)

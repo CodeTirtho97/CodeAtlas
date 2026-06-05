@@ -211,14 +211,13 @@ function GuideSection({ repo }: { repo: Repository }) {
       {guide.steps && guide.steps.length > 0 && (
         <div>
           <SectionLabel>Learning steps</SectionLabel>
-          <div className="relative space-y-3 mt-1">
-            <div className="absolute left-[19px] top-10 bottom-10 w-px bg-gradient-to-b from-surface-border via-surface-border/40 to-transparent pointer-events-none" />
+          <div className="space-y-3 mt-1">
             {guide.steps.map((step, i) => {
               const accent = STEP_ACCENTS[i % STEP_ACCENTS.length]
               const num = step.order ?? i + 1
               return (
-                <div key={num} className="relative flex gap-4 group">
-                  <div className={`w-10 h-10 rounded-xl border-2 ${accent.border} ${accent.bg} flex items-center justify-center text-sm font-bold ${accent.text} shrink-0 z-10 relative transition-all group-hover:scale-105`}>
+                <div key={num} className="flex gap-4 group">
+                  <div className={`w-10 h-10 rounded-xl border-2 ${accent.border} ${accent.bg} flex items-center justify-center text-sm font-bold ${accent.text} shrink-0 transition-all group-hover:scale-105`}>
                     {num}
                   </div>
                   <div className="flex-1 min-w-0 rounded-2xl border border-surface-border bg-surface-card p-5 group-hover:border-surface-border/80 transition-colors">

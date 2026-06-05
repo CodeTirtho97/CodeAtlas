@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, UUID, ForeignKey, JSON, Text
+from sqlalchemy import Column, String, Integer, UUID, ForeignKey, JSON, Text, DateTime
 from sqlalchemy.orm import relationship
 from app.models.db.base import BaseModel
 
@@ -19,6 +19,10 @@ class Repository(BaseModel):
     onboarding_json = Column(JSON, nullable=True)  # {steps, core_workflows, learning_path}
     api_endpoints_json = Column(JSON, nullable=True)  # [{method, path, file_path, function_name}]
     dependency_json = Column(JSON, nullable=True)  # {file: {uses: [], used_by: []}}
+
+    # Cached eval result
+    eval_report_json = Column(JSON, nullable=True)  # full EvalReport stored after run
+    eval_ran_at = Column(DateTime, nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="repositories")

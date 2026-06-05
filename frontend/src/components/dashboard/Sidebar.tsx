@@ -12,7 +12,6 @@ interface Props {
 export default function Sidebar({ repo, activeTab, onTabChange, onBack, rateLimits }: Props) {
   const shortName = repo.github_url.replace('https://github.com/', '')
   const repoDisplayName = shortName.split('/')[1] || shortName
-  const ratePct = Math.min(Math.round((rateLimits.today / 30) * 100), 100)
 
   return (
     <aside className="w-72 shrink-0 flex flex-col border-r border-surface-border/50 overflow-y-auto">
@@ -70,56 +69,95 @@ export default function Sidebar({ repo, activeTab, onTabChange, onBack, rateLimi
                 const isActive = activeTab === item.id
                 const isAsk = item.id === 'ask'
                 const colors = TAB_COLORS[item.id]
+                const hasUsage = isAsk && rateLimits.today > 0
+                const remaining = 30 - rateLimits.today
 
+                if (isAsk) {
+                  // ── Unified Ask AI chip ────────────────────────────────────
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => onTabChange(item.id)}
+                      className={[
+                        'group w-full flex flex-col rounded-xl cursor-pointer transition-all duration-150 overflow-hidden',
+                        isActive
+                          ? colors.rowActive
+                          : 'bg-transparent border-2 border-pink-400/70 hover:bg-pink-500/10 hover:border-pink-400/90',
+                      ].join(' ')}
+                    >
+                      {/* Top ~3/4: icon + label row */}
+                      <div className="flex items-center gap-3.5 px-3 pt-3.5 pb-3">
+                        <div className={[
+                          'w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all',
+                          isActive ? colors.iconActive : `bg-surface-raised/50 border border-surface-border/50 ${colors.hoverIcon}`,
+                        ].join(' ')}>
+                          <span className={`transition-colors ${isActive ? colors.iconColor : 'text-pink-400'}`}>
+                            {item.icon}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-bold leading-tight transition-colors ${isActive ? colors.labelActive : 'text-pink-300'}`}>
+                            {item.label}
+                          </p>
+                          <p className={`text-[11px] mt-0.5 leading-tight truncate transition-colors ${isActive ? colors.sublabelActive : 'text-pink-400/70'}`}>
+                            {item.sublabel}
+                          </p>
+                        </div>
+                        {isActive && (
+                          <div className={`w-1.5 h-7 rounded-full shrink-0 ${colors.pill}`} />
+                        )}
+                      </div>
+
+                      {/* Horizontal divider + bottom usage strip (~1/4 height) */}
+                      {hasUsage && (
+                        <>
+                          <div className="h-px bg-black/30" />
+                          <div className="flex items-center justify-between px-3 py-1.5 bg-black/25">
+                            <span className={`text-[10px] font-semibold tabular-nums ${remaining <= 5 ? 'text-red-400' : remaining <= 10 ? 'text-yellow-400' : 'text-pink-200'}`}>
+                              AI Prompts Remaining Today:&nbsp;
+                              <span className="font-bold">{remaining}</span>
+                            </span>
+                            <div className="flex flex-col items-end shrink-0 ml-2">
+                              <span className="text-[8px] text-slate-400 leading-tight">Renews</span>
+                              <span className="text-[8px] text-slate-400 leading-tight">12AM IST</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )
+                }
+
+                // ── Regular nav button for all other items ─────────────────
                 return (
                   <button
                     key={item.id}
                     onClick={() => onTabChange(item.id)}
                     className={[
-                      'group w-full flex items-center gap-3.5 rounded-xl text-left transition-all duration-150',
-                      // Ask AI gets extra vertical padding for prominence
-                      isAsk ? 'px-3 py-3.5' : 'px-3 py-3',
-                      // Ask AI: bright border always, no bg fill until active
+                      'group w-full flex items-center gap-3.5 px-3 py-3 rounded-xl text-left transition-all duration-150',
                       isActive
                         ? colors.rowActive
-                        : isAsk
-                          ? 'bg-transparent border-2 border-pink-400/70 hover:bg-pink-500/10 hover:border-pink-400/90'
-                          : `border border-transparent ${colors.hoverRow}`,
+                        : `border border-transparent ${colors.hoverRow}`,
                     ].join(' ')}
                   >
-                    {/* Icon box */}
                     <div className={[
-                      'rounded-xl flex items-center justify-center shrink-0 transition-all',
-                      // Ask AI icon box is slightly larger for emphasis
-                      isAsk ? 'w-9 h-9' : 'w-8 h-8',
-                      isActive
-                        ? colors.iconActive
-                        : `bg-surface-raised/50 border border-surface-border/50 ${colors.hoverIcon}`,
+                      'w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-all',
+                      isActive ? colors.iconActive : `bg-surface-raised/50 border border-surface-border/50 ${colors.hoverIcon}`,
                     ].join(' ')}>
-                      <span className={`transition-colors ${isActive ? colors.iconColor : isAsk ? 'text-pink-400' : 'text-ink-muted group-hover:text-ink'}`}>
+                      <span className={`transition-colors ${isActive ? colors.iconColor : 'text-ink-muted group-hover:text-ink'}`}>
                         {item.icon}
                       </span>
                     </div>
-
-                    {/* Label */}
                     <div className="flex-1 min-w-0">
-                      <p className={[
-                        'leading-tight transition-colors',
-                        isAsk ? 'text-sm font-bold' : 'text-sm font-semibold',
-                        isActive ? colors.labelActive : isAsk ? 'text-pink-300' : 'text-ink',
-                      ].join(' ')}>
+                      <p className={`text-sm font-semibold leading-tight transition-colors ${isActive ? colors.labelActive : 'text-ink'}`}>
                         {item.label}
                       </p>
-                      <p className={`text-[11px] mt-0.5 leading-tight truncate transition-colors ${
-                        isActive ? colors.sublabelActive : isAsk ? 'text-pink-400/70' : 'text-ink-muted group-hover:text-ink'
-                      }`}>
+                      <p className={`text-[11px] mt-0.5 leading-tight truncate transition-colors ${isActive ? colors.sublabelActive : 'text-ink-muted group-hover:text-ink'}`}>
                         {item.sublabel}
                       </p>
                     </div>
-
-                    {/* Active indicator pill */}
                     {isActive && (
-                      <div className={`w-1.5 rounded-full shrink-0 ${colors.pill} ${isAsk ? 'h-7' : 'h-5'}`} />
+                      <div className={`w-1.5 h-5 rounded-full shrink-0 ${colors.pill}`} />
                     )}
                   </button>
                 )
@@ -129,26 +167,6 @@ export default function Sidebar({ repo, activeTab, onTabChange, onBack, rateLimi
         ))}
       </nav>
 
-      {/* Rate limit */}
-      {rateLimits.today > 0 && (
-        <div className="mx-3 mb-4 px-4 py-3.5 rounded-xl bg-surface-raised/50 border border-surface-border/50">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-semibold text-ink-muted">AI prompts used</span>
-            <span className={`text-[11px] font-bold tabular-nums ${rateLimits.today >= 25 ? 'text-yellow-400' : 'text-ink-subtle'}`}>
-              {rateLimits.today} / 30
-            </span>
-          </div>
-          <div className="h-1.5 bg-surface-border rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${ratePct >= 80 ? 'bg-yellow-400' : 'bg-pink-500/60'}`}
-              style={{ width: `${ratePct}%` }}
-            />
-          </div>
-          {rateLimits.session > 0 && (
-            <p className="text-[10px] text-ink-subtle mt-1.5">Session: {rateLimits.session}/15 messages</p>
-          )}
-        </div>
-      )}
     </aside>
   )
 }

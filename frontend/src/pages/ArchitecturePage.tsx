@@ -17,14 +17,13 @@ export default function ArchitecturePage() {
         <section className="border-b border-surface-border">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-pink-400 bg-pink-500/10 border border-pink-500/20 px-3 py-1 rounded-full mb-6">
-              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" />
               Under the hood
             </span>
             <h1 className="text-3xl sm:text-4xl font-bold text-ink mb-4 leading-tight tracking-tight">
               How CodeAtlas Works
             </h1>
             <p className="text-ink-muted text-base max-w-2xl mx-auto leading-relaxed">
-              CodeAtlas is a <strong className="text-ink font-semibold">production RAG system</strong> built for source code —
+              CodeAtlas is a <strong className="text-ink font-semibold">Production RAG System</strong> built for source code —
               not PDFs, not text files. It uses AST-aware chunking, hybrid dense+sparse retrieval,
               and Reciprocal Rank Fusion to answer architecture questions with exact source citations.
             </p>
@@ -41,10 +40,10 @@ export default function ArchitecturePage() {
                 <p className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Naive approach</p>
                 <div className="space-y-2 text-sm text-ink-muted">
                   {[
-                    'Entire codebase → LLM context window. Fails for anything beyond ~500 files.',
-                    'No relevance filtering — the LLM sees irrelevant code and hallucinates.',
-                    'No persistence — every query re-processes the entire codebase.',
-                    "No citations — you can't verify where the answer came from.",
+                    'Entire codebase into the prompt — token limits hit fast, costs spike on real repos.',
+                    'No relevance filtering — diluted context, degraded answer quality.',
+                    'No persistence — full codebase re-sent on every query, slow and costly.',
+                    'No source grounding — answers cannot be traced to a file or function.',
                   ].map(t => (
                     <div key={t} className="flex items-start gap-2">
                       <span className="text-red-400 mt-0.5 shrink-0">✗</span>
@@ -57,7 +56,7 @@ export default function ArchitecturePage() {
                 <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-3">CodeAtlas RAG approach</p>
                 <div className="space-y-2 text-sm text-ink-muted">
                   {[
-                    'Index once into Qdrant — scales to any repo size, queries are fast.',
+                    'Index once into Qdrant — no re-processing per query, results stay fast as code grows.',
                     'Only the top-10 most relevant chunks enter the prompt — no noise.',
                     'Vectors persist — subsequent queries run in milliseconds, not minutes.',
                     'Every answer cites the exact file, function, and line range it used.',

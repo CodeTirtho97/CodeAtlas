@@ -69,10 +69,11 @@ export interface IngestionJob {
 
 export interface IngestionStatus {
   job_id: string
-  status: RepoStatus
+  status: RepoStatus | 'cancelled'
   progress_pct: number
   progress_message: string
   error: string | null
+  cancelled?: boolean
 }
 
 // ── Q&A ───────────────────────────────────────────────────────────────────────
@@ -162,4 +163,5 @@ export interface EvalReport {
   total_questions: number
   passed: number
   results: QuestionResult[]
+  ran_at?: string | null
 }

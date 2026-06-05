@@ -48,7 +48,7 @@ export default function HybridSearchSection() {
                 <span className="w-2 h-2 rounded-full bg-amber-400" />
                 <p className="text-xs font-bold text-amber-400 uppercase tracking-widest">Sparse signal</p>
               </div>
-              <p className="text-[11px] text-ink-muted mb-3">to_sparse_vector() → BM25 TF scores → keyword index → <strong className="text-ink">top-20</strong></p>
+              <p className="text-[11px] text-ink-muted mb-3">to_sparse_vector() → sparse TF scores → keyword index → <strong className="text-ink">top-20</strong></p>
               <div className="space-y-1.5">
                 {SPARSE_EXAMPLES.map(r => (
                   <div key={r} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-500/5 border border-amber-500/15">

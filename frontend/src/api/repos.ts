@@ -23,6 +23,10 @@ export const reposApi = {
     return r.data
   },
 
+  cancelIngestion: async (jobId: string): Promise<void> => {
+    await client.post(`/repos/ingest/${jobId}/cancel`)
+  },
+
   delete: async (repoId: string): Promise<void> => {
     await client.delete(`/repos/${repoId}`)
   },
@@ -30,6 +34,11 @@ export const reposApi = {
   analyzeImpact: async (repoId: string, symbol: string): Promise<ImpactResult> => {
     const r = await client.post(`/repos/${repoId}/impact`, { symbol })
     return r.data
+  },
+
+  getEvalResult: async (repoId: string): Promise<EvalReport | null> => {
+    const r = await client.get(`/repos/${repoId}/eval/result`)
+    return r.data ?? null
   },
 
   runEval: async (repoId: string): Promise<EvalReport> => {

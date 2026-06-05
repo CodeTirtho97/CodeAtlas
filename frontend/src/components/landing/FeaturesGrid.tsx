@@ -48,7 +48,7 @@ const FEATURES = [
     iconColor: 'text-orange-400',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
       </svg>
     ),
     tag: 'Hybrid RAG',
@@ -81,7 +81,7 @@ const FEATURES = [
     ),
     tag: 'Retrieval eval',
     title: 'AI Answer Quality Check',
-    desc: 'Run a quick benchmark to see how accurately the AI retrieves the right code for your questions — so you know when to trust the answers and when to dig deeper.',
+    desc: 'Auto-runs on first visit. See how accurately the AI retrieves the right code — with a health grade, so you know when to trust answers and when to dig deeper.',
   },
 ]
 

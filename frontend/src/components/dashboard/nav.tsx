@@ -101,6 +101,7 @@ export const TAB_COLORS: Record<TabId, {
   rowActive:      string
   iconActive:     string
   iconColor:      string
+  headingColor:   string
   labelActive:    string
   sublabelActive: string
   pill:           string
@@ -111,6 +112,7 @@ export const TAB_COLORS: Record<TabId, {
     rowActive:      'bg-blue-500/35 border border-blue-400/55',
     iconActive:     'bg-blue-500/45 border border-blue-400/60',
     iconColor:      'text-blue-200',
+    headingColor:   'text-blue-400',
     labelActive:    'text-white',
     sublabelActive: 'text-blue-300',
     pill:           'bg-blue-400',
@@ -121,6 +123,7 @@ export const TAB_COLORS: Record<TabId, {
     rowActive:      'bg-violet-500/35 border border-violet-400/55',
     iconActive:     'bg-violet-500/45 border border-violet-400/60',
     iconColor:      'text-violet-200',
+    headingColor:   'text-violet-400',
     labelActive:    'text-white',
     sublabelActive: 'text-violet-300',
     pill:           'bg-violet-400',
@@ -131,6 +134,7 @@ export const TAB_COLORS: Record<TabId, {
     rowActive:      'bg-cyan-500/30 border border-cyan-400/50',
     iconActive:     'bg-cyan-500/40 border border-cyan-400/55',
     iconColor:      'text-cyan-200',
+    headingColor:   'text-cyan-400',
     labelActive:    'text-white',
     sublabelActive: 'text-cyan-300',
     pill:           'bg-cyan-400',
@@ -141,6 +145,7 @@ export const TAB_COLORS: Record<TabId, {
     rowActive:      'bg-amber-500/30 border border-amber-400/50',
     iconActive:     'bg-amber-500/40 border border-amber-400/55',
     iconColor:      'text-amber-200',
+    headingColor:   'text-amber-400',
     labelActive:    'text-white',
     sublabelActive: 'text-amber-300',
     pill:           'bg-amber-400',
@@ -151,6 +156,7 @@ export const TAB_COLORS: Record<TabId, {
     rowActive:      'bg-emerald-500/30 border border-emerald-400/50',
     iconActive:     'bg-emerald-500/40 border border-emerald-400/55',
     iconColor:      'text-emerald-200',
+    headingColor:   'text-emerald-400',
     labelActive:    'text-white',
     sublabelActive: 'text-emerald-300',
     pill:           'bg-emerald-400',
@@ -161,6 +167,7 @@ export const TAB_COLORS: Record<TabId, {
     rowActive:      'bg-pink-500/45 border border-pink-400/65 shadow-md shadow-pink-500/25',
     iconActive:     'bg-pink-500/60 border border-pink-400/70',
     iconColor:      'text-pink-100',
+    headingColor:   'text-pink-400',
     labelActive:    'text-white',
     sublabelActive: 'text-pink-200',
     pill:           'bg-pink-300',

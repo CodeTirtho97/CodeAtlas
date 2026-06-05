@@ -1,4 +1,18 @@
 const FEATURES = [
+  // ── Sidebar order: Overview → Understand → Explore → Ask AI → Impact Area → Evaluate ──
+  {
+    color: 'text-cyan-400',
+    bg: 'bg-cyan-500/8 border-cyan-500/20',
+    iconBg: 'bg-cyan-500/10',
+    icon: (
+      <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
+      </svg>
+    ),
+    tab: 'Overview',
+    title: 'Repo Intelligence Dashboard',
+    desc: 'At-a-glance stats — chunk count, endpoint count, tracked imports, entry points — plus purpose summary, stack chips, and architecture description.',
+  },
   {
     color: 'text-blue-400',
     bg: 'bg-blue-500/8 border-blue-500/20',
@@ -63,19 +77,6 @@ const FEATURES = [
     tab: 'Evaluate',
     title: 'AI Answer Quality Check',
     desc: 'Runs a retrieval benchmark (Recall@5 + MRR) against auto-generated golden questions. Shows whether the AI is finding the right code — with a health grade.',
-  },
-  {
-    color: 'text-cyan-400',
-    bg: 'bg-cyan-500/8 border-cyan-500/20',
-    iconBg: 'bg-cyan-500/10',
-    icon: (
-      <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
-      </svg>
-    ),
-    tab: 'Overview',
-    title: 'Repo Intelligence Dashboard',
-    desc: 'At-a-glance stats — chunk count, endpoint count, tracked imports, entry points — plus purpose summary, stack chips, and architecture description.',
   },
 ]
 

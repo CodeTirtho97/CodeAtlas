@@ -4,7 +4,7 @@ import { reposApi } from '../api/repos'
 import type { Repository } from '../types'
 import Header from '../components/Header'
 import { DashboardSkeleton } from '../components/dashboard/shared'
-import { PAGE_META, type TabId } from '../components/dashboard/nav'
+import { PAGE_META, TAB_COLORS, type TabId } from '../components/dashboard/nav'
 import Sidebar from '../components/dashboard/Sidebar'
 import MobileNav from '../components/dashboard/MobileNav'
 import OverviewPanel from '../components/dashboard/OverviewPanel'
@@ -120,7 +120,7 @@ export default function DashboardPage() {
                     </svg>
                   </span>
                   <div>
-                    <p className="text-sm font-semibold text-ink">Ask AI</p>
+                    <p className="text-xl font-bold text-pink-400">Ask AI</p>
                     <p className="text-[11px] text-ink-muted">{meta.description}</p>
                   </div>
                 </div>
@@ -136,7 +136,7 @@ export default function DashboardPage() {
             ) : (
               <div className="px-8 py-6 pb-24 lg:pb-8 animate-fade-in" key={activeTab}>
                 <div className="mb-7">
-                  <h2 className="text-xl font-bold text-ink">{meta.title}</h2>
+                  <h2 className={`text-xl font-bold ${TAB_COLORS[activeTab].headingColor}`}>{meta.title}</h2>
                   <p className="text-sm text-ink-muted mt-1 leading-relaxed">{meta.description}</p>
                 </div>
 

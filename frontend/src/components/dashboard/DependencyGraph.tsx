@@ -357,20 +357,52 @@ function MiniCard({ files, deps, onCheckImpact }: {
   )
 }
 
-// ─── Feature 1: Orientation strip ────────────────────────────────────────────
+// ─── Combined info bar (orientation + legend + hints) ────────────────────────
 
-function OrientationStrip() {
+function GraphInfoBar() {
   return (
-    <div className="flex items-center justify-between px-4 py-2 rounded-xl border border-surface-border/50 bg-surface-raised/20 text-[10px]">
-      <div className="flex items-center gap-1.5">
-        <span className="w-2 h-2 rounded-full bg-emerald-500/70" />
-        <span className="text-emerald-400 font-medium">Top = files others rely on most</span>
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2.5 rounded-xl border border-surface-border/50 bg-surface-raised/20 text-[10px]">
+
+      {/* Flow direction */}
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1">
+          <span className="text-emerald-400 font-bold text-xs leading-none">↑</span>
+          <span className="text-emerald-400/80 font-medium">relied on by others</span>
+        </div>
+        <span className="text-slate-600">·</span>
+        <div className="flex items-center gap-1">
+          <svg className="w-3 h-3 text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+          </svg>
+          <span className="text-slate-500">importer to imported</span>
+        </div>
+        <span className="text-slate-600">·</span>
+        <div className="flex items-center gap-1">
+          <span className="text-blue-400 font-bold text-xs leading-none">↓</span>
+          <span className="text-blue-400/80 font-medium">relies on others</span>
+        </div>
       </div>
-      <span className="text-slate-500">Arrows point from importer → imported</span>
-      <div className="flex items-center gap-1.5">
-        <span className="text-blue-400 font-medium">Bottom = files that consume others</span>
-        <span className="w-2 h-2 rounded-full bg-blue-500/70" />
+
+      {/* Divider */}
+      <div className="w-px h-4 bg-slate-700/60 shrink-0 hidden sm:block" />
+
+      {/* Legend */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {([
+          [ROLE.hub.dot,    'Hub',      'risky to change',  'text-orange-300'],
+          [ROLE.sink.dot,   'Shared',   'many import this', 'text-emerald-300'],
+          [ROLE.source.dot, 'Consumer', 'imports many',     'text-blue-300'],
+          [ROLE.normal.dot, 'Normal',   'few connections',  'text-slate-400'],
+        ] as [string, string, string, string][]).map(([color, label, desc, textCls]) => (
+          <div key={label} className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+            <span className={`font-semibold ${textCls}`}>{label}</span>
+            <span className="text-slate-600">· {desc}</span>
+          </div>
+        ))}
       </div>
+
+
     </div>
   )
 }
@@ -389,7 +421,23 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initE)
   const [focusedId, setFocusedId]       = useState<string | null>(null)
   const [focusedRole, setFocusedRole]   = useState<NodeData['role']>('normal')
-  const baseEdgesRef = useRef(initE)
+  const baseEdgesRef  = useRef(initE)
+  const containerRef  = useRef<HTMLDivElement>(null)
+
+  // Ctrl + scroll → zoom; plain scroll → page scrolls normally
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        const factor = e.deltaY < 0 ? 1.12 : 0.89
+        rf.zoomTo(rf.getZoom() * factor, { duration: 0 })
+      }
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [rf])
 
   // Rebuild on deps / search change
   useEffect(() => {
@@ -492,7 +540,7 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
         .react-flow__node { outline: none !important; }
       `}</style>
 
-      <div className="w-full rounded-2xl border border-surface-border overflow-hidden relative"
+      <div ref={containerRef} className="w-full rounded-2xl border border-surface-border overflow-hidden relative"
         style={{ height, background: '#050d1a' }}>
 
         {/* Focused-node pill — top-centre with "Check impact" button */}
@@ -533,6 +581,8 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
           onPaneClick={() => setFocusedId(null)}
           onInit={onInit}
           minZoom={0.1} maxZoom={3}
+          zoomOnScroll={false}
+          preventScrolling={false}
           elementsSelectable={false}
           nodesFocusable={false}
           proOptions={{ hideAttribution: true }}
@@ -542,6 +592,50 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
           <Controls showZoom={false} showInteractive={false}
             style={{ background: '#0f172a', border: '1px solid #1e293b' }} />
         </ReactFlow>
+
+        {/* Focus hint — bottom-right */}
+        <div className="absolute bottom-3 right-3 z-10 pointer-events-none select-none
+                        flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
+                        bg-slate-800/60 backdrop-blur-sm border border-slate-700/50 text-[8px]">
+          <svg className="w-2.5 h-2.5 text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" />
+          </svg>
+          <span className="text-slate-400">Click node to focus</span>
+          <span className="text-slate-700">·</span>
+          <kbd className="px-1 py-px rounded border border-slate-600 bg-slate-700/80 text-[8px] font-bold text-slate-300 leading-none">Esc</kbd>
+          <span className="text-slate-400">to reset</span>
+        </div>
+
+        {/* Keyboard hint — top-right, two lines */}
+        <div className="absolute top-3 right-3 z-10 pointer-events-none select-none
+                        flex flex-col gap-1.5 items-center px-2.5 py-2 rounded-lg
+                        bg-slate-800/60 backdrop-blur-sm border border-slate-700/50">
+          {/* Line 1: zoom */}
+          <div className="flex items-center gap-1">
+            <kbd className="inline-flex items-center px-1 py-px rounded border border-slate-600
+                            bg-slate-700/80 text-[8px] font-bold text-slate-300 leading-none">
+              Ctrl
+            </kbd>
+            <span className="text-slate-600 text-[8px]">+</span>
+            <kbd className="inline-flex items-center px-1 py-px rounded border border-slate-600
+                            bg-slate-700/80 text-[8px] font-bold text-slate-300 leading-none">
+              Scroll
+            </kbd>
+            <span className="text-slate-400 text-[8px]">to zoom</span>
+          </div>
+          {/* Divider */}
+          <div className="w-full h-px bg-slate-700/50" />
+          {/* Line 2: pan */}
+          <div className="flex items-center gap-1">
+            <kbd className="inline-flex items-center px-1 py-px rounded border border-slate-600
+                            bg-slate-700/80 leading-none">
+              <svg className="w-2.5 h-2.5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" />
+              </svg>
+            </kbd>
+            <span className="text-slate-400 text-[8px]">drag to pan</span>
+          </div>
+        </div>
       </div>
     </ImpactCtx.Provider>
   )
@@ -555,28 +649,6 @@ function ComponentGraph(props: Parameters<typeof ComponentGraphInner>[0]) {
   )
 }
 
-// ─── Legend ───────────────────────────────────────────────────────────────────
-
-function Legend() {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1">
-      {([
-        [ROLE.hub.dot,    'Hub',      'Highly connected — dangerous to change'],
-        [ROLE.sink.dot,   'Shared',   'Many files import this'],
-        [ROLE.source.dot, 'Consumer', 'This file imports many others'],
-        [ROLE.normal.dot, 'Normal',   'Few connections'],
-      ] as [string, string, string][]).map(([color, label, tip]) => (
-        <div key={label} className="flex items-center gap-1.5" title={tip}>
-          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
-          <span className="text-[10px] text-slate-300 font-medium">{label}</span>
-        </div>
-      ))}
-      <span className="ml-auto text-[10px] text-slate-500">
-        Click a node to focus · Escape to reset
-      </span>
-    </div>
-  )
-}
 
 // ─── Public component ─────────────────────────────────────────────────────────
 
@@ -627,11 +699,8 @@ export default function DependencyGraph({ deps, onCheckImpact }: Props) {
   return (
     <div className="space-y-3">
 
-      {/* Feature 1: Orientation strip */}
-      <OrientationStrip />
-
-      {/* Legend */}
-      <Legend />
+      {/* Info bar: orientation + legend + hints */}
+      <GraphInfoBar />
 
       {/* Feature 4: Search */}
       <div className="relative">
@@ -651,22 +720,27 @@ export default function DependencyGraph({ deps, onCheckImpact }: Props) {
         )}
       </div>
 
-      {/* Feature 2: Tabs with category subtitle */}
-      <div className="flex items-start gap-1 flex-wrap">
+      {/* Feature 2: Component chips */}
+      <div className="flex items-start gap-1.5 flex-wrap">
         {allTabs.map((tab, i) => {
           const sq   = search.toLowerCase()
           const hits = sq ? tab.files.filter(f => f.toLowerCase().includes(sq)).length : 0
+          const isActive = i === active
           return (
-            <button key={tab.id} onClick={() => setActive(i)}
+            <button
+              key={tab.id}
+              onClick={() => setActive(i)}
               className={[
-                'flex flex-col items-start px-3 py-2 rounded-xl border text-left transition-all',
-                i === active
-                  ? 'bg-surface-card border-surface-border shadow-sm'
-                  : 'border-transparent hover:bg-surface-raised/50 hover:border-surface-border/50',
+                'flex flex-col items-start px-3 py-2 rounded-xl border text-left transition-all duration-150',
+                isActive
+                  ? 'bg-blue-500/10 border-blue-400/45 shadow-[0_0_0_1px_rgba(96,165,250,0.1)]'
+                  : 'bg-surface-raised/20 border-slate-700/40 hover:bg-surface-raised/40 hover:border-slate-600/60',
               ].join(' ')}
             >
               <div className="flex items-center gap-1.5">
-                <span className={`text-xs font-semibold ${i === active ? 'text-white' : 'text-slate-400'}`}>
+                <span className={`text-xs font-bold transition-colors ${
+                  isActive ? 'text-blue-100' : 'text-slate-400'
+                }`}>
                   {tab.name}
                 </span>
                 {hits > 0 && (
@@ -674,12 +748,18 @@ export default function DependencyGraph({ deps, onCheckImpact }: Props) {
                     {hits} match{hits !== 1 ? 'es' : ''}
                   </span>
                 )}
-                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full ${
-                  i === active ? 'bg-surface-raised text-slate-300' : 'text-slate-500'}`}>
+                <span className={[
+                  'text-[9px] font-mono px-1.5 py-0.5 rounded-full border transition-colors',
+                  isActive
+                    ? 'bg-blue-500/20 text-blue-300 border-blue-400/30'
+                    : 'bg-surface-raised text-slate-500 border-slate-700/50',
+                ].join(' ')}>
                   {tab.files.length}
                 </span>
               </div>
-              <span className={`text-[9px] mt-0.5 ${i === active ? 'text-slate-400' : 'text-slate-600'}`}>
+              <span className={`text-[9px] mt-0.5 transition-colors ${
+                isActive ? 'text-blue-300/60' : 'text-slate-600'
+              }`}>
                 {tab.category}
               </span>
             </button>

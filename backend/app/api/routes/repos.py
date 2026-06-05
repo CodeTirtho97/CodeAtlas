@@ -79,6 +79,7 @@ async def get_ingestion_status(
         "progress_pct": job.progress_pct,
         "progress_message": job.progress_message,
         "error": job.error,
+        "cancelled": job.cancelled,
     }
 
 
@@ -177,6 +178,54 @@ async def ingest_repo(
         status="pending",
         github_url=github_url,
     )
+
+
+@router.post("/ingest/{job_id}/cancel")
+async def cancel_ingestion(
+    job_id: str,
+    current_user: User = Depends(get_current_user_dependency),
+    session: AsyncSession = Depends(get_session),
+):
+    """Cancel a running ingestion job and delete the repository record."""
+    result = await session.execute(
+        select(IngestionJob).where(IngestionJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Ingestion job not found")
+
+    # Verify ownership
+    repo_result = await session.execute(
+        select(Repository).where(
+            (Repository.id == job.repository_id)
+            & (Repository.user_id == current_user.id)
+        )
+    )
+    repo = repo_result.scalar_one_or_none()
+    if not repo:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if job.status in ("completed", "failed"):
+        raise HTTPException(status_code=400, detail="Job already finished — cannot cancel.")
+
+    # Set the cancellation flag so the pipeline aborts at its next checkpoint
+    job.cancelled = True
+    job.status = "cancelled"
+    job.progress_message = "Cancelling…"
+    await session.commit()
+
+    # Delete vectors from Qdrant (best-effort — may not exist yet)
+    try:
+        qdrant_client = await get_qdrant_client()
+        await delete_from_qdrant(qdrant_client, str(repo.id))
+    except Exception:
+        pass
+
+    # Delete the repo record so the user's slot is freed immediately
+    await session.delete(repo)
+    await session.commit()
+
+    return {"message": "Ingestion cancelled"}
 
 
 @router.get("/{repo_id}", response_model=RepositoryResponse)

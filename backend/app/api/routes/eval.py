@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,45 @@ class EvalReportResponse(BaseModel):
     total_questions: int
     passed: int
     results: List[QuestionResultResponse]
+    ran_at: Optional[datetime] = None
+
+
+def _repo_to_response(repo: Repository) -> EvalReportResponse:
+    """Build EvalReportResponse from a repo's cached eval_report_json."""
+    d = repo.eval_report_json
+    return EvalReportResponse(
+        recall_at_5=d["recall_at_5"],
+        mrr=d["mrr"],
+        total_questions=d["total_questions"],
+        passed=d["passed"],
+        results=[QuestionResultResponse(**r) for r in d["results"]],
+        ran_at=repo.eval_ran_at,
+    )
+
+
+async def _get_repo(session: AsyncSession, repo_id: str, user_id) -> Repository:
+    result = await session.execute(
+        select(Repository).where(
+            (Repository.id == repo_id) & (Repository.user_id == user_id)
+        )
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    return repo
+
+
+@router.get("/{repo_id}/eval/result", response_model=Optional[EvalReportResponse])
+async def get_cached_eval(
+    repo_id: str,
+    current_user: User = Depends(get_current_user_dependency),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return the last cached eval result, or null if never run."""
+    repo = await _get_repo(session, repo_id, current_user.id)
+    if not repo.eval_report_json:
+        return None
+    return _repo_to_response(repo)
 
 
 @router.post("/{repo_id}/eval/run", response_model=EvalReportResponse)
@@ -39,22 +79,8 @@ async def run_retrieval_eval(
     current_user: User = Depends(get_current_user_dependency),
     session: AsyncSession = Depends(get_session),
 ) -> EvalReportResponse:
-    """Run a RAG retrieval evaluation for a repository.
-
-    Uses the repo's extracted API endpoints as a golden question set:
-    each endpoint becomes a question with a known expected source file.
-    Measures Recall@5 and MRR of the hybrid retriever.
-
-    No LLM calls — purely retrieval quality measurement.
-    """
-    result = await session.execute(
-        select(Repository).where(
-            (Repository.id == repo_id) & (Repository.user_id == current_user.id)
-        )
-    )
-    repo = result.scalar_one_or_none()
-    if not repo:
-        raise HTTPException(status_code=404, detail="Repository not found")
+    """Run a RAG retrieval evaluation and persist the result."""
+    repo = await _get_repo(session, repo_id, current_user.id)
     if repo.status != "completed":
         raise HTTPException(status_code=400, detail="Repository indexing not completed")
     if not repo.api_endpoints_json:
@@ -70,21 +96,28 @@ async def run_retrieval_eval(
         qdrant_client=qdrant_client,
     )
 
-    return EvalReportResponse(
-        recall_at_5=report.recall_at_5,
-        mrr=report.mrr,
-        total_questions=report.total_questions,
-        passed=report.passed,
-        results=[
-            QuestionResultResponse(
-                question=r.question,
-                endpoint=r.endpoint,
-                expected_file=r.expected_file,
-                retrieved_files=r.retrieved_files,
-                hit=r.hit,
-                rank=r.rank,
-                reciprocal_rank=r.reciprocal_rank,
-            )
+    # Persist result so next visit loads instantly
+    report_dict = {
+        "recall_at_5": report.recall_at_5,
+        "mrr": report.mrr,
+        "total_questions": report.total_questions,
+        "passed": report.passed,
+        "results": [
+            {
+                "question": r.question,
+                "endpoint": r.endpoint,
+                "expected_file": r.expected_file,
+                "retrieved_files": r.retrieved_files,
+                "hit": r.hit,
+                "rank": r.rank,
+                "reciprocal_rank": r.reciprocal_rank,
+            }
             for r in report.results
         ],
-    )
+    }
+    repo.eval_report_json = report_dict
+    repo.eval_ran_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(repo)
+
+    return _repo_to_response(repo)

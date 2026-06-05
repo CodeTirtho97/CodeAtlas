@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { reposApi } from '../../api/repos'
 import type { EvalReport, QuestionResult } from '../../types'
 import Spinner from '../Spinner'
@@ -162,16 +162,52 @@ export default function EvalDashboard({ repoId }: { repoId: string }) {
   const [loading, setLoading] = useState(false)
   const [report, setReport] = useState<EvalReport | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [noEndpoints, setNoEndpoints] = useState(false)
+  const [initialising, setInitialising] = useState(true)
 
-  const handleRun = async () => {
+  const isNoEndpointsError = (msg: string) =>
+    msg.toLowerCase().includes('no api endpoints') || msg.toLowerCase().includes('cannot build')
+
+  // On first mount: load cached result; if none exists, auto-trigger the run
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const cached = await reposApi.getEvalResult(repoId)
+        if (cached) {
+          setReport(cached)
+          setInitialising(false)
+        } else {
+          setInitialising(false)
+          setLoading(true)
+          try {
+            const data = await reposApi.runEval(repoId)
+            setReport(data)
+          } catch (e: any) {
+            const msg = e.response?.data?.detail ?? 'Evaluation failed. Please try again.'
+            if (isNoEndpointsError(msg)) setNoEndpoints(true)
+            else setError(msg)
+          } finally {
+            setLoading(false)
+          }
+        }
+      } catch {
+        setInitialising(false)
+      }
+    }
+    init()
+  }, [repoId])
+
+  const handleRerun = async () => {
     setLoading(true)
-    setReport(null)
     setError(null)
+    setNoEndpoints(false)
     try {
       const data = await reposApi.runEval(repoId)
       setReport(data)
     } catch (e: any) {
-      setError(e.response?.data?.detail ?? 'Evaluation failed. Please try again.')
+      const msg = e.response?.data?.detail ?? 'Evaluation failed. Please try again.'
+      if (isNoEndpointsError(msg)) setNoEndpoints(true)
+      else setError(msg)
     } finally {
       setLoading(false)
     }
@@ -188,10 +224,48 @@ export default function EvalDashboard({ repoId }: { repoId: string }) {
     ? Math.round((report.results.filter(r => r.rank === 1).length / report.total_questions) * 100)
     : 0
 
+  if (initialising) return (
+    <div className="flex items-center justify-center py-20">
+      <Spinner size="md" />
+    </div>
+  )
+
+  if (noEndpoints) return (
+    <div className="flex flex-col items-center justify-center py-16 text-center max-w-sm mx-auto">
+      <div className="w-14 h-14 rounded-2xl bg-surface-raised border border-surface-border/60 flex items-center justify-center mb-5">
+        <svg className="w-7 h-7 text-ink-subtle/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+        </svg>
+      </div>
+      <h2 className="text-sm font-semibold text-ink mb-2">Not applicable for this project</h2>
+      <p className="text-xs text-ink-muted leading-relaxed mb-4">
+        Quality evaluation works by testing whether the AI can find the right file for each API endpoint. This repository has no detected API endpoints — it's likely a frontend, library, or documentation-only project.
+      </p>
+      <div className="w-full rounded-xl bg-surface-raised/50 border border-surface-border/50 px-4 py-3 text-left mb-6">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-ink-subtle mb-1.5">What you can do instead</p>
+        <ul className="space-y-1.5">
+          {[
+            'Use Ask AI to explore how the codebase is structured',
+            'Check Understand for a learning path through the code',
+            'Use Explore to browse files and dependencies',
+          ].map(tip => (
+            <li key={tip} className="flex items-start gap-2 text-[11px] text-ink-muted">
+              <span className="text-emerald-400 mt-0.5 shrink-0">✓</span>
+              {tip}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="text-[10px] text-ink-subtle/50">
+        Evaluation is designed for backend services with identifiable API routes.
+      </p>
+    </div>
+  )
+
   return (
     <div className="space-y-6 pb-10">
 
-      {/* ── Run card ── */}
+      {/* ── Header card ── */}
       <div className="rounded-2xl border border-surface-border bg-surface-card p-5">
         <div className="flex items-start gap-4">
           <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
@@ -206,18 +280,25 @@ export default function EvalDashboard({ repoId }: { repoId: string }) {
               Uses your API endpoints as test cases — each one has a known correct file, so we can
               measure how often the AI looks in the right place.
             </p>
+            {report?.ran_at && (
+              <p className="text-[10px] text-ink-subtle mt-1.5">
+                Last run: {new Date(report.ran_at).toLocaleString()}
+              </p>
+            )}
           </div>
-          <button
-            onClick={handleRun}
-            disabled={loading}
-            className="px-4 py-2.5 rounded-xl bg-violet-500 hover:bg-violet-400 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center gap-2 shrink-0"
-          >
-            {loading
-              ? <Spinner size="sm" className="border-white/40 border-t-white" />
-              : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" /></svg>
-            }
-            {loading ? 'Testing…' : 'Run Test'}
-          </button>
+          {report && (
+            <button
+              onClick={handleRerun}
+              disabled={loading}
+              className="px-4 py-2.5 rounded-xl bg-violet-500 hover:bg-violet-400 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center gap-2 shrink-0"
+            >
+              {loading
+                ? <Spinner size="sm" className="border-white/40 border-t-white" />
+                : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+              }
+              {loading ? 'Testing…' : 'Re-Evaluate'}
+            </button>
+          )}
         </div>
         {error && <p className="text-xs text-red-400 mt-3 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
         {loading && (

@@ -45,6 +45,10 @@ from app.services.generation.onboarding import generate_onboarding_guide
 log = logging.getLogger(__name__)
 
 
+class PipelineCancelledError(Exception):
+    """Raised when the pipeline detects a user-requested cancellation."""
+
+
 # ─── Entry Point (called by BackgroundTasks) ─────────────────────────────────
 
 async def run(job_id: str, repository_id: str, github_url: str) -> None:
@@ -60,23 +64,59 @@ async def run(job_id: str, repository_id: str, github_url: str) -> None:
             clone_dir = await _run_pipeline(
                 session, job_id, repository_id, github_url
             )
+        except PipelineCancelledError:
+            log.info("Pipeline cancelled by user for job %s", job_id)
         except ClonerError as exc:
             log.warning("Clone failed for job %s: %s", job_id, exc)
+            await _fail_job(session, job_id, _friendly_clone_error(str(exc)))
+        except ValueError as exc:
+            log.error("Pipeline validation error for job %s: %s", job_id, exc)
             await _fail_job(session, job_id, str(exc))
-        except (ValueError, RuntimeError) as exc:
-            # Known pipeline errors — message is already user-readable
-            log.error("Pipeline failed for job %s: %s", job_id, exc)
-            await _fail_job(session, job_id, str(exc))
+        except RuntimeError as exc:
+            log.error("Pipeline runtime error for job %s: %s", job_id, exc)
+            await _fail_job(session, job_id, _friendly_runtime_error(str(exc)))
         except Exception as exc:
-            log.error(
-                "Pipeline failed for job %s: %s", job_id, exc, exc_info=True
-            )
-            await _fail_job(session, job_id, f"Unexpected error: {type(exc).__name__}: {exc}")
+            log.error("Pipeline failed for job %s: %s", job_id, exc, exc_info=True)
+            await _fail_job(session, job_id, "Something went wrong on our end. Please try again.")
         finally:
             cleanup_repo(job_id)
 
 
 # ─── Pipeline Steps ───────────────────────────────────────────────────────────
+
+def _friendly_clone_error(raw: str) -> str:
+    r = raw.lower()
+    if "not found" in r or "404" in r or "repository not found" in r:
+        return "Repository not found. Make sure it's public and the URL is correct."
+    if "authentication" in r or "403" in r or "permission" in r or "access denied" in r:
+        return "Access denied. Only public repositories are supported."
+    if "timeout" in r or "timed out" in r:
+        return "Cloning timed out. The repository may be too large or GitHub is slow right now. Try again."
+    if "invalid" in r or "bad url" in r:
+        return "Invalid repository URL. Please check the URL and try again."
+    return "Could not clone the repository. Check that it's public and try again."
+
+
+def _friendly_runtime_error(raw: str) -> str:
+    r = raw.lower()
+    if "embed" in r or "embedding" in r or "google" in r or "api key" in r:
+        return "The AI embedding service is temporarily unavailable. Please try again in a few minutes."
+    if "qdrant" in r or "vector" in r:
+        return "The vector database is temporarily unavailable. Please try again shortly."
+    if "gemini" in r or "summary" in r or "onboarding" in r:
+        return "The AI summarisation service is temporarily unavailable. Please try again in a few minutes."
+    return "Something went wrong during indexing. Please try again."
+
+
+async def _check_cancelled(session: AsyncSession, job_id: str) -> None:
+    """Raise PipelineCancelledError if the job has been flagged for cancellation."""
+    result = await session.execute(
+        select(IngestionJob).where(IngestionJob.id == job_id)
+    )
+    job = result.scalar_one_or_none()
+    if job and job.cancelled:
+        raise PipelineCancelledError()
+
 
 async def _run_pipeline(
     session: AsyncSession,
@@ -85,36 +125,37 @@ async def _run_pipeline(
     github_url: str,
 ) -> Path:
     # ── Step 1: Clone ────────────────────────────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=5, msg="Cloning repository...")
     clone_dir = await asyncio.to_thread(clone_repo, github_url, job_id)
 
     # ── Step 2: Filter files ─────────────────────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=15, msg="Filtering files...")
     files = await asyncio.to_thread(get_filtered_files, clone_dir)
 
     if not files:
-        raise ValueError("No indexable files found in this repository.")
+        raise ValueError("No indexable code files found. The repository may be empty, documentation-only, or use unsupported languages.")
 
-    log.info(
-        "Job %s: found %d files to index in %s",
-        job_id, len(files), github_url,
-    )
+    log.info("Job %s: found %d files to index in %s", job_id, len(files), github_url)
 
     # ── Step 3: Parse code ───────────────────────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=20, msg="Parsing code...")
     chunks = await asyncio.to_thread(parse_all_files, files)
 
     if not chunks:
-        raise ValueError("No chunks extracted from repository files.")
+        raise ValueError("Couldn't extract any code structures. The files may use an unsupported format or be mostly non-code content.")
 
     log.info("Job %s: extracted %d chunks", job_id, len(chunks))
 
     # ── Step 4: Generate embeddings ──────────────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=50, msg="Generating embeddings...")
-    # embed_chunks raises RuntimeError with the actual API error if all batches fail
     chunks_with_embeddings = await asyncio.to_thread(embed_chunks, chunks)
 
     # ── Step 5: Store vectors + DB records ───────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=75, msg="Storing vectors...")
     qdrant_client = await get_qdrant_client()
     point_id_map = await store_in_qdrant(
@@ -123,20 +164,24 @@ async def _run_pipeline(
     await store_in_postgres(session, chunks, files, repository_id, point_id_map)
 
     # ── Step 6: Dependency graph ─────────────────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=85, msg="Building dependency graph...")
     dep_json = await asyncio.to_thread(build_dependency_graph, chunks)
 
     # ── Step 7: API endpoint extraction ──────────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=88, msg="Extracting API endpoints...")
     endpoints_json = extract_endpoints(chunks)
 
     # ── Step 8: Repository summary (Gemini) ───────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=92, msg="Generating repository summary...")
     summary_json = await asyncio.to_thread(
         generate_summary, github_url, clone_dir
     )
 
     # ── Step 9: Onboarding guide (Gemini) ─────────────────────────────────────
+    await _check_cancelled(session, job_id)
     await _update_job(session, job_id, pct=96, msg="Generating onboarding guide...")
     onboarding_json = await asyncio.to_thread(
         generate_onboarding_guide, summary_json, files, chunks

@@ -488,38 +488,71 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
 
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-              {/* 1. Cited sources — most important, shown first */}
+              {/* 1. Answer preview — first */}
+              {inspectedMessage && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-muted mb-3">Answer Preview</p>
+                  <div className="rounded-xl border border-pink-500/20 bg-pink-500/5 px-3 py-3">
+                    <p className="text-[11px] leading-relaxed text-ink-muted line-clamp-3">
+                      {inspectedMessage.content}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 2. Cited sources — compact list rows */}
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-muted mb-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-muted mb-2">
                   Cited Sources
                 </p>
                 {inspectedSources.length > 0 ? (
                   <div className="space-y-2">
-                    {inspectedSources.map((source, index) => (
-                      <div key={`${source.file_path}-${index}`} className="rounded-xl border border-surface-border bg-surface-raised/30 px-3 py-2.5">
-                        <p className="text-xs font-semibold text-ink truncate leading-tight">
-                          {source.file_path.split('/').pop()}
-                        </p>
-                        <p className="text-[10px] text-ink-muted font-mono truncate mt-0.5">
-                          {source.file_path}
-                        </p>
-                        {source.function_name && (
-                          <p className="text-[11px] text-pink-300 mt-1 truncate">
-                            {source.function_name}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                          {source.line_start && source.line_end && (
-                            <span className="text-[9px] font-mono font-semibold bg-surface-raised border border-surface-border px-1.5 py-0.5 rounded text-ink-muted">
-                              L{source.line_start}–{source.line_end}
-                            </span>
-                          )}
-                          <span className="text-[9px] font-bold uppercase tracking-wide bg-surface-raised border border-surface-border px-1.5 py-0.5 rounded text-ink-subtle">
-                            {source.chunk_type}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
+                    {inspectedSources.map((source, index) => {
+                      const fileName = source.file_path.split('/').pop() ?? source.file_path
+                      const ct = source.chunk_type?.toLowerCase() ?? ''
+                      const { border, badge, label, linkColor } =
+                        ct === 'function' ? { border: 'border-l-pink-400',    badge: 'bg-pink-500/15 text-pink-300 border-pink-500/30',       label: 'Function', linkColor: 'text-pink-400 hover:text-pink-200' }
+                        : ct === 'class'  ? { border: 'border-l-violet-400',  badge: 'bg-violet-500/15 text-violet-300 border-violet-500/30', label: 'Class',    linkColor: 'text-violet-400 hover:text-violet-200' }
+                        : ct === 'module' ? { border: 'border-l-blue-400',    badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',       label: 'Module',   linkColor: 'text-blue-400 hover:text-blue-200' }
+                        : ct === 'raw'    ? { border: 'border-l-yellow-400',  badge: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30', label: 'Raw',      linkColor: 'text-yellow-400 hover:text-yellow-200' }
+                        :                  { border: 'border-l-emerald-400',  badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', label: ct || 'File', linkColor: 'text-emerald-400 hover:text-emerald-200' }
+                      return (
+                        <a
+                          key={`${source.file_path}-${index}`}
+                          href={`${repo.github_url}/blob/HEAD/${source.file_path}${source.line_start ? `#L${source.line_start}${source.line_end ? `-L${source.line_end}` : ''}` : ''}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`flex items-center gap-3 pl-3 pr-3 py-2.5 rounded-xl bg-surface-raised/30 border border-surface-border border-l-2 ${border} hover:bg-surface-raised/60 transition-colors cursor-pointer`}
+                        >
+                          {/* Left: filename + path + symbol */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1">
+                              <p className="text-[11px] font-semibold text-ink truncate leading-tight">{fileName}</p>
+                              <svg className={`w-2.5 h-2.5 shrink-0 ${linkColor.split(' ')[0]}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                              </svg>
+                            </div>
+                            <p className="text-[9px] text-ink-subtle font-mono truncate mt-0.5">{source.file_path}</p>
+                            {source.function_name && (
+                              <p className="text-[9px] text-pink-300/80 truncate mt-0.5">{source.function_name}</p>
+                            )}
+                          </div>
+                          {/* Right: badges */}
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            {source.line_start && source.line_end && (
+                              <span className="text-[8px] font-mono font-bold bg-surface-raised border border-surface-border px-1.5 py-0.5 rounded text-ink-muted">
+                                L{source.line_start}–{source.line_end}
+                              </span>
+                            )}
+                            {ct && (
+                              <span className={`text-[8px] font-bold uppercase tracking-wide border px-1.5 py-0.5 rounded ${badge}`}>
+                                {label}
+                              </span>
+                            )}
+                          </div>
+                        </a>
+                      )
+                    })}
                   </div>
                 ) : inspectedMessage ? (
                   <p className="text-[11px] text-ink-muted border border-dashed border-surface-border rounded-xl px-3 py-4 text-center">
@@ -531,28 +564,6 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                   </p>
                 )}
               </div>
-
-              {/* 2. Selected answer preview */}
-              {inspectedMessage && (
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-muted mb-3">Answer Preview</p>
-                  <div className="rounded-xl border border-pink-500/20 bg-pink-500/5 px-3 py-3">
-                    <p className="text-[11px] leading-relaxed text-ink-muted line-clamp-5">
-                      {inspectedMessage.content}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* 3. Repo context — bottom */}
-              {repo.summary?.purpose && (
-                <div className="rounded-xl border border-surface-border bg-surface-raised/20 px-3 py-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-subtle mb-2">Repo Context</p>
-                  <p className="text-[11px] text-ink-muted leading-relaxed line-clamp-4">
-                    {repo.summary.purpose}
-                  </p>
-                </div>
-              )}
 
             </div>
           </aside>

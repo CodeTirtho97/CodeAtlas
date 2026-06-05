@@ -260,11 +260,13 @@ function DepRow({ filePath, uses, usedBy }: { filePath: string; uses: string[]; 
 
 // ─── System Map ───────────────────────────────────────────────────────────────
 
-function SystemMap({ repo, onCheckImpact }: { repo: Repository; onCheckImpact?: (path: string) => void }) {
+function SystemMap({ repo, view, onCheckImpact }: { repo: Repository; view: 'graph' | 'list'; onCheckImpact?: (path: string) => void }) {
   const deps = repo.dependencies
   const [search, setSearch] = useState('')
   const [showAll, setShowAll] = useState(false)
-  const [view, setView] = useState<'graph' | 'list'>('graph')
+  const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set())
+  const toggleCard = (i: number) =>
+    setExpandedCards(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
   const PAGE = 30
 
   const allEntries = useMemo(() => {
@@ -300,98 +302,73 @@ function SystemMap({ repo, onCheckImpact }: { repo: Repository; onCheckImpact?: 
               Changing them is risky — a bug here can break many things at once.
             </p>
           </div>
-          <div className="grid sm:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-3 gap-2.5">
             {topFiles.map(([fp, dep], i) => {
-              const rank = RANK_STYLE[i]
-              const dependents = dep.used_by.length   // how many files rely on this
-              const dependsOn  = dep.uses.length      // how many files this relies on
-              const total      = dependents + dependsOn
+              const rank        = RANK_STYLE[i]
+              const dependents  = dep.used_by.length
+              const dependsOn   = dep.uses.length
+              const total       = dependents + dependsOn
               const dependentPct = total > 0 ? Math.round((dependents / total) * 100) : 50
-              const isHighRisk = dependents >= 4
+              const isHighRisk  = dependents >= 4
+              const isExpanded  = expandedCards.has(i)
+
               return (
-                <div key={fp} className="relative rounded-2xl border border-surface-border bg-surface-card overflow-hidden flex flex-col">
+                <div key={fp} className="relative rounded-xl border border-surface-border bg-surface-card overflow-hidden">
+                  {/* Top accent */}
                   <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${rank.accent}`} />
-                  <div className="p-5 flex flex-col gap-3 flex-1">
 
-                    {/* Rank + risk badge */}
-                    <div className="flex items-center justify-between">
-                      <span className={`w-7 h-7 rounded-lg border text-xs font-black flex items-center justify-center ${rank.badge}`}>
-                        {i + 1}
-                      </span>
-                      {isHighRisk && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/25 text-red-400">
-                          High risk to change
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Filename */}
-                    <div>
-                      <code className="text-sm font-mono font-semibold text-ink block truncate" title={fp}>
+                  {/* Collapsed header — always visible, clickable */}
+                  <button
+                    onClick={() => toggleCard(i)}
+                    className="w-full flex items-center gap-2.5 px-3.5 pt-4 pb-3 text-left group"
+                  >
+                    <span className={`w-6 h-6 rounded-md border text-[11px] font-black flex items-center justify-center shrink-0 ${rank.badge}`}>
+                      {i + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <code className="text-xs font-mono font-semibold text-ink block truncate" title={fp}>
                         {fp.split('/').pop()}
                       </code>
-                      <p className="text-[10px] text-ink-subtle font-mono truncate mt-0.5">{fp}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="text-[10px] text-emerald-400 font-medium">↑ {dependents} rely on this</span>
+                        <span className="text-[10px] text-blue-400 font-medium">↓ uses {dependsOn}</span>
+                        {isHighRisk && (
+                          <span className="text-[9px] font-bold px-1.5 py-px rounded-full bg-red-500/10 border border-red-500/25 text-red-400">
+                            High risk
+                          </span>
+                        )}
+                      </div>
                     </div>
+                    <svg
+                      className={`w-3.5 h-3.5 text-ink-subtle shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
 
-                    {/* Plain-English stats */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-500/8 border border-emerald-500/15">
-                        <span className="text-base font-bold text-emerald-400">{dependents}</span>
-                        <span className="text-[11px] text-emerald-300/80 leading-tight">
-                          {dependents === 1 ? 'other file relies on this' : 'other files rely on this'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-blue-500/8 border border-blue-500/15">
-                        <span className="text-base font-bold text-blue-400">{dependsOn}</span>
-                        <span className="text-[11px] text-blue-300/80 leading-tight">
-                          {dependsOn === 1 ? 'file this one relies on' : 'files this one relies on'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Ratio bar */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[9px] text-ink-subtle">
-                        <span>others rely on it</span>
-                        <span>it relies on others</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden flex">
-                        <div className="h-full bg-emerald-500/60 transition-all" style={{ width: `${dependentPct}%` }} />
-                        <div className="h-full bg-blue-500/60 flex-1" />
+                  {/* Expanded detail */}
+                  {isExpanded && (
+                    <div className="px-3.5 pb-3.5 space-y-2.5 border-t border-surface-border/50 pt-2.5 animate-fade-in">
+                      <p className="text-[10px] text-ink-subtle font-mono truncate">{fp}</p>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px] text-ink-subtle">
+                          <span>others rely on it</span>
+                          <span>it relies on others</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden flex">
+                          <div className="h-full bg-emerald-500/60 transition-all" style={{ width: `${dependentPct}%` }} />
+                          <div className="h-full bg-blue-500/60 flex-1" />
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               )
             })}
           </div>
         </div>
       )}
-
-      {/* View toggle — centred */}
-      <div className="flex justify-center">
-        <div className="flex items-center gap-1.5 bg-surface-raised/50 border border-surface-border rounded-2xl p-1.5">
-          <button
-            onClick={() => setView('graph')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${view === 'graph' ? 'bg-surface-card border border-surface-border text-ink shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <circle cx="5" cy="12" r="2.5" /><circle cx="19" cy="5" r="2.5" /><circle cx="19" cy="19" r="2.5" />
-              <path strokeLinecap="round" d="M7 11l10-5M7 13l10 5" />
-            </svg>
-            Graph
-          </button>
-          <button
-            onClick={() => setView('list')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${view === 'list' ? 'bg-surface-card border border-surface-border text-ink shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-            </svg>
-            List
-          </button>
-        </div>
-      </div>
 
       {/* Graph view */}
       {view === 'graph' && (
@@ -459,7 +436,10 @@ function SystemMap({ repo, onCheckImpact }: { repo: Repository; onCheckImpact?: 
 type SubView = 'api' | 'deps'
 
 export default function ExplorePanel({ repo, onCheckImpact }: { repo: Repository; onCheckImpact?: (path: string) => void }) {
-  const [sub, setSub] = useState<SubView>('api')
+  const [sub, setSub] = useState<SubView>(
+    (repo.api_endpoints?.length ?? 0) === 0 ? 'deps' : 'api'
+  )
+  const [mapView, setMapView] = useState<'graph' | 'list'>('graph')
 
   const subTabs: { id: SubView; label: string; count: string }[] = [
     {
@@ -476,28 +456,64 @@ export default function ExplorePanel({ repo, onCheckImpact }: { repo: Repository
 
   return (
     <div className="space-y-6 pb-10">
-      {/* Sub-nav */}
-      <div className="flex items-center gap-1 bg-surface-raised/50 border border-surface-border rounded-xl p-1 w-fit">
-        {subTabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setSub(t.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
-              sub === t.id
-                ? 'bg-surface-card border border-surface-border text-ink shadow-sm'
-                : 'text-ink-subtle hover:text-ink hover:bg-surface-card/50'
-            }`}
-          >
-            {t.label}
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${sub === t.id ? 'bg-surface-raised text-ink-muted' : 'text-ink-subtle'}`}>
-              {t.count}
-            </span>
-          </button>
-        ))}
+      {/* Sub-nav row: main tabs (left) + graph/list toggle (right, System Map only) */}
+      <div className="flex items-center justify-between gap-3">
+        {/* Main tabs */}
+        <div className="flex items-center gap-1 bg-surface-raised/50 border border-surface-border rounded-xl p-1">
+          {subTabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setSub(t.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                sub === t.id
+                  ? 'bg-surface-card border border-surface-border text-ink shadow-sm'
+                  : 'text-ink-subtle hover:text-ink hover:bg-surface-card/50'
+              }`}
+            >
+              {t.label}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${sub === t.id ? 'bg-surface-raised text-ink-muted' : 'text-ink-subtle'}`}>
+                {t.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Graph / List icon toggle — only visible under System Map */}
+        {sub === 'deps' && (
+          <div className="flex items-center gap-0.5 bg-surface-raised/50 border border-surface-border rounded-xl p-1">
+            <button
+              onClick={() => setMapView('graph')}
+              title="Graph view"
+              className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                mapView === 'graph'
+                  ? 'bg-surface-card border border-surface-border text-ink shadow-sm'
+                  : 'text-ink-subtle hover:text-ink hover:bg-surface-card/50'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <circle cx="5" cy="12" r="2.5" /><circle cx="19" cy="5" r="2.5" /><circle cx="19" cy="19" r="2.5" />
+                <path strokeLinecap="round" d="M7 11l10-5M7 13l10 5" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setMapView('list')}
+              title="List view"
+              className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                mapView === 'list'
+                  ? 'bg-surface-card border border-surface-border text-ink shadow-sm'
+                  : 'text-ink-subtle hover:text-ink hover:bg-surface-card/50'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+              </svg>
+            </button>
+          </div>
+        )}
       </div>
 
       {sub === 'api' && <ApiSurface repo={repo} />}
-      {sub === 'deps' && <SystemMap repo={repo} onCheckImpact={onCheckImpact} />}
+      {sub === 'deps' && <SystemMap repo={repo} view={mapView} onCheckImpact={onCheckImpact} />}
     </div>
   )
 }

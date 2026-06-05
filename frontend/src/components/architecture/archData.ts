@@ -42,11 +42,11 @@ export const PIPELINE_STEPS = [
 ]
 
 export const BENCHMARKS = [
-  { value: '~1ms',      label: 'Parse time per file',     sub: 'Tree-sitter AST, measured across 50 runs',        color: 'text-blue-400',   bg: 'bg-blue-500/8 border-blue-500/20'     },
-  { value: '978',       label: 'Files / second',          sub: 'Parser throughput on 100-file batch',             color: 'text-violet-400', bg: 'bg-violet-500/8 border-violet-500/20' },
-  { value: '3,072',     label: 'Embedding dimensions',    sub: 'gemini-embedding-001 vector size',                color: 'text-pink-400',   bg: 'bg-pink-500/8 border-pink-500/20'     },
-  { value: '0.02ms',    label: 'Sparse vector latency',   sub: 'Per chunk, vocabulary-free BM25',                 color: 'text-emerald-400',bg: 'bg-emerald-500/8 border-emerald-500/20'},
-  { value: '30,000',    label: 'Hash vocab space',        sub: 'MD5 feature hashing, collision-resistant',        color: 'text-amber-400',  bg: 'bg-amber-500/8 border-amber-500/20'   },
+  { value: '~1ms',      label: 'Parse time per file',     sub: 'Tree-sitter AST on local hardware — varies by file size and CPU',        color: 'text-blue-400',   bg: 'bg-blue-500/8 border-blue-500/20'     },
+  { value: '978',       label: 'Files / second',          sub: 'Parser throughput on 100-file batch — scales with CPU core count',        color: 'text-violet-400', bg: 'bg-violet-500/8 border-violet-500/20' },
+  { value: '3,072',     label: 'Embedding dimensions',    sub: 'gemini-embedding-001 fixed output — model dependent',                color: 'text-pink-400',   bg: 'bg-pink-500/8 border-pink-500/20'     },
+  { value: '0.02ms',    label: 'Sparse vector latency',   sub: 'Vocabulary-free sparse TF via feature hashing — no IDF weighting',   color: 'text-emerald-400',bg: 'bg-emerald-500/8 border-emerald-500/20'},
+  { value: '30,000',    label: 'Hash vocab space',        sub: 'MD5 feature hashing, low collision rate — collisions skipped silently',color: 'text-amber-400',  bg: 'bg-amber-500/8 border-amber-500/20'   },
   { value: '20+20→10',  label: 'Retrieval pipeline',      sub: 'Dense + sparse → manual RRF fusion (k=60)',       color: 'text-cyan-400',   bg: 'bg-cyan-500/8 border-cyan-500/20'     },
 ]
 

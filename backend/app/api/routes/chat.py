@@ -226,6 +226,10 @@ async def ask_question(
     chat_session.message_count += 1
     chat_session.updated_at = datetime.utcnow()
 
+    # Auto-title from first question
+    if session_msg_count == 0:
+        chat_session.title = question[:57] + "…" if len(question) > 57 else question
+
     await db_session.commit()
     await db_session.refresh(user_message)
     await db_session.refresh(assistant_message)
