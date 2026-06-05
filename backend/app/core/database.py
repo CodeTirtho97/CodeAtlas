@@ -29,9 +29,17 @@ async def get_session() -> AsyncSession:
 async def init_db():
     """Initialize database (create tables)."""
     from app.models.db.base import Base
+    from sqlalchemy import text
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # chunk_text is evicted after embedding — allow NULL on existing DBs
+        try:
+            await conn.execute(text(
+                "ALTER TABLE chunks ALTER COLUMN chunk_text DROP NOT NULL"
+            ))
+        except Exception:
+            pass  # Already nullable, or table doesn't exist yet
 
 
 async def close_db():

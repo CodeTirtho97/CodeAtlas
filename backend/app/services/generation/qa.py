@@ -290,7 +290,8 @@ def _enrich_sources(
             "class_name":    source.get("class_name"),
             "line_start":    source.get("line_start") or (matched.line_start if matched else None),
             "line_end":      source.get("line_end")   or (matched.line_end   if matched else None),
-            "chunk_type":    matched.chunk_type if matched else None,
+            "chunk_type":    matched.chunk_type    if matched else None,
+            "chunk_preview": matched.chunk_preview if matched else None,
         })
 
     return enriched

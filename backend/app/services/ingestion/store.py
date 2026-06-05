@@ -62,7 +62,7 @@ async def store_in_qdrant(
                 "line_end": chunk.line_end,
                 "architectural_role": chunk.architectural_role,
                 # Store a short preview for citation display
-                "chunk_preview": chunk.chunk_text[:300],
+                "chunk_preview": chunk.chunk_text[:1500],
             },
         ))
 
@@ -137,7 +137,7 @@ async def store_in_postgres(
             id=uuid.uuid4(),
             repository_id=repository_id,
             file_id=file_record.id,
-            chunk_text=chunk.chunk_text,
+            chunk_text=None,  # evicted — full text is in Qdrant payload (chunk_preview)
             chunk_type=chunk.chunk_type,
             language=chunk.language,
             language_tier=chunk.language_tier,

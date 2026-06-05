@@ -32,9 +32,11 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [evidenceOpen, setEvidenceOpen] = useState(false)
   const [userExpandedEvidence, setUserExpandedEvidence] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState<Record<string, boolean>>({})
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const autoSubmittedRef = useRef<string | null>(null)
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
@@ -43,6 +45,16 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
   useEffect(() => {
     if (initialQuestion) setQuestion(initialQuestion)
   }, [initialQuestion])
+
+  // Auto-submit when navigated from another tab — fires once per unique initialQuestion
+  // once a session is ready. Skips silently if no session exists yet.
+  useEffect(() => {
+    if (!initialQuestion || !activeSessionId) return
+    if (autoSubmittedRef.current === initialQuestion) return
+    autoSubmittedRef.current = initialQuestion
+    handleSubmit(initialQuestion)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuestion, activeSessionId])
 
   useEffect(() => {
     const loadSessions = async () => {
@@ -102,8 +114,8 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
     }
   }
 
-  const handleSubmit = async () => {
-    const q = question.trim()
+  const handleSubmit = async (forceQuestion?: string) => {
+    const q = (forceQuestion !== undefined ? forceQuestion : question).trim()
     if (!q || loading || !activeSessionId) return
 
     const tempId = `temp-${Date.now()}`
@@ -511,46 +523,79 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                       const fileName = source.file_path.split('/').pop() ?? source.file_path
                       const ct = source.chunk_type?.toLowerCase() ?? ''
                       const { border, badge, label, linkColor } =
-                        ct === 'function' ? { border: 'border-l-pink-400',    badge: 'bg-pink-500/15 text-pink-300 border-pink-500/30',       label: 'Function', linkColor: 'text-pink-400 hover:text-pink-200' }
-                        : ct === 'class'  ? { border: 'border-l-violet-400',  badge: 'bg-violet-500/15 text-violet-300 border-violet-500/30', label: 'Class',    linkColor: 'text-violet-400 hover:text-violet-200' }
-                        : ct === 'module' ? { border: 'border-l-blue-400',    badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',       label: 'Module',   linkColor: 'text-blue-400 hover:text-blue-200' }
-                        : ct === 'raw'    ? { border: 'border-l-yellow-400',  badge: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30', label: 'Raw',      linkColor: 'text-yellow-400 hover:text-yellow-200' }
-                        :                  { border: 'border-l-emerald-400',  badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', label: ct || 'File', linkColor: 'text-emerald-400 hover:text-emerald-200' }
+                        ct === 'function' ? { border: 'border-l-pink-400',    badge: 'bg-pink-500/15 text-pink-300 border-pink-500/30',         label: 'Function', linkColor: 'text-pink-400' }
+                        : ct === 'class'  ? { border: 'border-l-violet-400',  badge: 'bg-violet-500/15 text-violet-300 border-violet-500/30',   label: 'Class',    linkColor: 'text-violet-400' }
+                        : ct === 'module' ? { border: 'border-l-blue-400',    badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',         label: 'Module',   linkColor: 'text-blue-400' }
+                        : ct === 'raw'    ? { border: 'border-l-yellow-400',  badge: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',   label: 'Raw',      linkColor: 'text-yellow-400' }
+                        :                  { border: 'border-l-emerald-400',  badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', label: ct || 'File', linkColor: 'text-emerald-400' }
+                      const previewKey = `${source.file_path}-${index}`
+                      const isPreviewOpen = !!previewOpen[previewKey]
+                      const githubHref = `${repo.github_url}/blob/HEAD/${source.file_path}${source.line_start ? `#L${source.line_start}${source.line_end ? `-L${source.line_end}` : ''}` : ''}`
                       return (
-                        <a
-                          key={`${source.file_path}-${index}`}
-                          href={`${repo.github_url}/blob/HEAD/${source.file_path}${source.line_start ? `#L${source.line_start}${source.line_end ? `-L${source.line_end}` : ''}` : ''}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`flex items-center gap-3 pl-3 pr-3 py-2.5 rounded-xl bg-surface-raised/30 border border-surface-border border-l-2 ${border} hover:bg-surface-raised/60 transition-colors cursor-pointer`}
+                        <div
+                          key={previewKey}
+                          className={`rounded-xl bg-surface-raised/30 border border-surface-border border-l-2 ${border} overflow-hidden`}
                         >
-                          {/* Left: filename + path + symbol */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1">
-                              <p className="text-[11px] font-semibold text-ink truncate leading-tight">{fileName}</p>
-                              <svg className={`w-2.5 h-2.5 shrink-0 ${linkColor.split(' ')[0]}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-                              </svg>
+                          {/* Card header row */}
+                          <div className="flex items-center gap-2 pl-3 pr-2 py-2.5">
+                            {/* Left: filename + path + symbol */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1">
+                                <p className="text-[11px] font-semibold text-ink truncate leading-tight">{fileName}</p>
+                              </div>
+                              <p className="text-[9px] text-ink-subtle font-mono truncate mt-0.5">{source.file_path}</p>
+                              {source.function_name && (
+                                <p className="text-[9px] text-pink-300/80 truncate mt-0.5">{source.function_name}</p>
+                              )}
                             </div>
-                            <p className="text-[9px] text-ink-subtle font-mono truncate mt-0.5">{source.file_path}</p>
-                            {source.function_name && (
-                              <p className="text-[9px] text-pink-300/80 truncate mt-0.5">{source.function_name}</p>
-                            )}
+                            {/* Right: badges + actions */}
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              {source.line_start && source.line_end && (
+                                <span className="text-[8px] font-mono font-bold bg-surface-raised border border-surface-border px-1.5 py-0.5 rounded text-ink-muted">
+                                  L{source.line_start}–{source.line_end}
+                                </span>
+                              )}
+                              {ct && (
+                                <span className={`text-[8px] font-bold uppercase tracking-wide border px-1.5 py-0.5 rounded ${badge}`}>
+                                  {label}
+                                </span>
+                              )}
+                            </div>
+                            {/* Action buttons */}
+                            <div className="flex items-center gap-1 shrink-0 ml-1">
+                              {source.chunk_preview && (
+                                <button
+                                  onClick={() => setPreviewOpen(prev => ({ ...prev, [previewKey]: !prev[previewKey] }))}
+                                  title={isPreviewOpen ? 'Hide code' : 'Show code'}
+                                  className={`p-1 rounded-md transition-all ${isPreviewOpen ? `${linkColor} bg-surface-raised` : 'text-ink-subtle hover:text-ink hover:bg-surface-raised'}`}
+                                >
+                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+                                  </svg>
+                                </button>
+                              )}
+                              <a
+                                href={githubHref}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Open in GitHub"
+                                className={`p-1 rounded-md text-ink-subtle hover:${linkColor} hover:bg-surface-raised transition-all`}
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                                </svg>
+                              </a>
+                            </div>
                           </div>
-                          {/* Right: badges */}
-                          <div className="flex flex-col items-end gap-1 shrink-0">
-                            {source.line_start && source.line_end && (
-                              <span className="text-[8px] font-mono font-bold bg-surface-raised border border-surface-border px-1.5 py-0.5 rounded text-ink-muted">
-                                L{source.line_start}–{source.line_end}
-                              </span>
-                            )}
-                            {ct && (
-                              <span className={`text-[8px] font-bold uppercase tracking-wide border px-1.5 py-0.5 rounded ${badge}`}>
-                                {label}
-                              </span>
-                            )}
-                          </div>
-                        </a>
+                          {/* Collapsible code preview */}
+                          {isPreviewOpen && source.chunk_preview && (
+                            <div className="border-t border-surface-border/50">
+                              <pre className="text-[10px] font-mono text-ink-muted leading-relaxed px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto bg-surface-raised/20">
+                                {source.chunk_preview}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
                       )
                     })}
                   </div>

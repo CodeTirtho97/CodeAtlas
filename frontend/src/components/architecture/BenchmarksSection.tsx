@@ -7,7 +7,7 @@ export default function BenchmarksSection() {
         <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-subtle mb-2">Real benchmark results</p>
         <h2 className="text-xl font-bold text-ink mb-2">Measured performance</h2>
         <p className="text-xs text-ink-muted mb-8">
-          Measured via pytest-benchmark on local hardware. Network-bound steps (Gemini embeddings, Qdrant writes) excluded — those are API/infra dependent.
+          Measured on local hardware. Network-bound steps (Gemini embeddings, Qdrant writes) excluded — those are API/infra dependent.
         </p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {BENCHMARKS.map(m => (

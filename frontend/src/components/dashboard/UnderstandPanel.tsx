@@ -176,7 +176,7 @@ function OverviewSection({ repo }: { repo: Repository }) {
 
 // ─── Guide section ────────────────────────────────────────────────────────────
 
-function GuideSection({ repo }: { repo: Repository }) {
+function GuideSection({ repo, onAskAI }: { repo: Repository; onAskAI?: (q: string) => void }) {
   const guide = repo.onboarding
 
   if (!guide) return (
@@ -229,12 +229,26 @@ function GuideSection({ repo }: { repo: Repository }) {
                     {step.files && step.files.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {step.files.map(f => (
-                          <span key={f} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${accent.border} ${accent.bg} text-[11px] font-mono ${accent.text}`}>
-                            <svg className="w-3 h-3 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                            </svg>
-                            {f}
-                          </span>
+                          onAskAI ? (
+                            <button
+                              key={f}
+                              onClick={() => onAskAI(`Explain ${f} in ${repo.name}. What does it do and how does it fit into the architecture?`)}
+                              title="Ask AI about this file"
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${accent.border} ${accent.bg} text-[11px] font-mono ${accent.text} hover:brightness-125 transition-all`}
+                            >
+                              <svg className="w-3 h-3 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                              </svg>
+                              {f}
+                            </button>
+                          ) : (
+                            <span key={f} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${accent.border} ${accent.bg} text-[11px] font-mono ${accent.text}`}>
+                              <svg className="w-3 h-3 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                              </svg>
+                              {f}
+                            </span>
+                          )
                         ))}
                       </div>
                     )}
@@ -262,6 +276,18 @@ function GuideSection({ repo }: { repo: Repository }) {
                   {i + 1}
                 </div>
                 <p className="text-sm text-ink-muted leading-relaxed flex-1">{wf}</p>
+                {onAskAI && (
+                  <button
+                    onClick={() => onAskAI(`Walk me through the "${wf}" flow in ${repo.name}. Which files are involved and in what order?`)}
+                    title="Ask AI about this workflow"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-500/10 border border-violet-500/25 text-violet-300 text-[10px] font-semibold hover:bg-violet-500/20 transition-all"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+                    </svg>
+                    Ask AI
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -273,7 +299,7 @@ function GuideSection({ repo }: { repo: Repository }) {
 
 // ─── Combined panel ───────────────────────────────────────────────────────────
 
-export default function UnderstandPanel({ repo }: { repo: Repository }) {
+export default function UnderstandPanel({ repo, onAskAI }: { repo: Repository; onAskAI?: (q: string) => void }) {
   return (
     <div className="space-y-10 pb-10">
       <OverviewSection repo={repo} />
@@ -290,7 +316,7 @@ export default function UnderstandPanel({ repo }: { repo: Repository }) {
         <div className="flex-1 h-px bg-gradient-to-l from-surface-border/80 to-transparent" />
       </div>
 
-      <GuideSection repo={repo} />
+      <GuideSection repo={repo} onAskAI={onAskAI} />
     </div>
   )
 }

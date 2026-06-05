@@ -78,7 +78,7 @@ function MetricCard({
 
 // ─── Question row ─────────────────────────────────────────────────────────────
 
-function QuestionRow({ r }: { r: QuestionResult }) {
+function QuestionRow({ r, onAskAI }: { r: QuestionResult; onAskAI?: (q: string) => void }) {
   const [expanded, setExpanded] = useState(false)
 
   const rankLabel = r.hit && r.rank
@@ -120,6 +120,18 @@ function QuestionRow({ r }: { r: QuestionResult }) {
             Asked about <span className="font-medium text-ink">{r.endpoint}</span> — expected AI to find <code className="text-[11px] bg-surface-raised px-1 py-0.5 rounded">{r.expected_file.split('/').pop()}</code>
           </p>
         </div>
+        {!r.hit && onAskAI && (
+          <button
+            onClick={e => { e.stopPropagation(); onAskAI(r.question) }}
+            title="Ask AI this question to debug the miss"
+            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-pink-500/10 border border-pink-500/25 text-pink-300 text-[10px] font-semibold hover:bg-pink-500/20 transition-all"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+            </svg>
+            Ask AI
+          </button>
+        )}
 
         <svg className={`w-3.5 h-3.5 text-ink-subtle shrink-0 transition-transform mt-1 ${expanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -158,7 +170,7 @@ function QuestionRow({ r }: { r: QuestionResult }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function EvalDashboard({ repoId }: { repoId: string }) {
+export default function EvalDashboard({ repoId, onAskAI }: { repoId: string; onAskAI?: (q: string) => void }) {
   const [loading, setLoading] = useState(false)
   const [report, setReport] = useState<EvalReport | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -421,7 +433,7 @@ export default function EvalDashboard({ repoId }: { repoId: string }) {
                 <p className="text-[10px] text-ink-muted">AI couldn't find the right file for these endpoints</p>
               </div>
               <div className="divide-y divide-surface-border/40">
-                {failedResults.map((r, i) => <QuestionRow key={i} r={r} />)}
+                {failedResults.map((r, i) => <QuestionRow key={i} r={r} onAskAI={onAskAI} />)}
               </div>
             </div>
           )}

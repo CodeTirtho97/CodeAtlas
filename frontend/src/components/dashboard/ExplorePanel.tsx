@@ -119,6 +119,11 @@ function ApiSurface({ repo }: { repo: Repository }) {
                         {ep.function_name}
                       </span>
                     )}
+                    {ep.language && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-surface-raised border-surface-border text-ink-subtle shrink-0 hidden sm:block">
+                        {ep.language}
+                      </span>
+                    )}
                     {ep.line && (
                       <span className="text-[10px] text-ink-subtle shrink-0 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
                         L{ep.line}

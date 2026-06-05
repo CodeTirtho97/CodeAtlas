@@ -85,6 +85,7 @@ export interface SourceCitation {
   line_start: number | null
   line_end: number | null
   chunk_type: string
+  chunk_preview?: string | null
 }
 
 export interface QueryResponse {

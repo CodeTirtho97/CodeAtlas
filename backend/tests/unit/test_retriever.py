@@ -136,7 +136,8 @@ class TestRetriever:
 
     @pytest.mark.asyncio
     @patch("app.services.search.retriever.embed_query")
-    async def test_uses_dense_and_sparse_prefetch(self, mock_embed):
+    async def test_makes_two_separate_searches(self, mock_embed):
+        """Retriever calls query_points twice: once with using='' (dense) and once with using='text' (sparse)."""
         mock_embed.return_value = [0.1] * 768
 
         mock_client = AsyncMock()
@@ -146,10 +147,10 @@ class TestRetriever:
 
         await search(mock_client, "authentication flow", "repo-123")
 
-        call_kwargs = mock_client.query_points.call_args[1]
-        prefetches = call_kwargs["prefetch"]
-        # Should have exactly 2 prefetch stages (dense + sparse)
-        assert len(prefetches) == 2
+        assert mock_client.query_points.call_count == 2
+        using_values = {c.kwargs["using"] for c in mock_client.query_points.call_args_list}
+        assert "" in using_values       # dense vector search
+        assert "text" in using_values   # sparse vector search
 
     @pytest.mark.asyncio
     @patch("app.services.search.retriever.embed_query")
@@ -172,19 +173,35 @@ class TestRetriever:
 
     @pytest.mark.asyncio
     @patch("app.services.search.retriever.embed_query")
-    async def test_uses_rrf_fusion(self, mock_embed):
-        from qdrant_client.models import Fusion
+    async def test_rrf_merges_dense_and_sparse_results(self, mock_embed):
+        """RRF must combine results from both searches; a point in both lists ranks above one in only one."""
         mock_embed.return_value = [0.1] * 768
 
+        # shared_point appears in both dense and sparse → should rank #1 via RRF
+        shared_point = _make_qdrant_point(file_path="auth/service.py", function_name="authenticate")
+        shared_point.id = "shared-point"
+
+        # dense_only_point appears only in the dense result
+        dense_only_point = _make_qdrant_point(file_path="other/module.py", function_name="helper")
+        dense_only_point.id = "dense-only-point"
+
         mock_client = AsyncMock()
-        mock_response = MagicMock()
-        mock_response.points = []
-        mock_client.query_points = AsyncMock(return_value=mock_response)
+        dense_response = MagicMock()
+        dense_response.points = [shared_point, dense_only_point]
+        sparse_response = MagicMock()
+        sparse_response.points = [shared_point]
 
-        await search(mock_client, "question", "repo-id")
+        # First gather call gets dense_response, second gets sparse_response
+        mock_client.query_points = AsyncMock(side_effect=[dense_response, sparse_response])
 
-        call_kwargs = mock_client.query_points.call_args[1]
-        assert call_kwargs["query"] == Fusion.RRF
+        results = await search(mock_client, "authenticate", "repo-id")
+
+        file_paths = [r.file_path for r in results]
+        # Both results must appear
+        assert "auth/service.py" in file_paths
+        assert "other/module.py" in file_paths
+        # shared_point (in both lists) must rank above dense_only_point (in one list)
+        assert results[0].file_path == "auth/service.py"
 
     @pytest.mark.asyncio
     @patch("app.services.search.retriever.embed_query")

@@ -31,6 +31,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         setUser(JSON.parse(storedUser))
         setIsAuthenticated(true)
+        // Pre-warm the backend so it's ready before the first real API call.
+        apiClient.get('/health').catch(() => {})
       } catch {
         localStorage.removeItem('user')
       }

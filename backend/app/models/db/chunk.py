@@ -13,7 +13,7 @@ class Chunk(BaseModel):
     )
     file_id = Column(UUID, ForeignKey("files.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    chunk_text = Column(Text, nullable=False)
+    chunk_text = Column(Text, nullable=True)
     chunk_type = Column(String)  # function, class, endpoint, doc, raw
     language = Column(String)
     language_tier = Column(String)  # 1 or 2

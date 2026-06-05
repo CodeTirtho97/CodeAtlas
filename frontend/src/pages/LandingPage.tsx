@@ -20,6 +20,10 @@ export default function LandingPage() {
   const [limitError, setLimitError] = useState('')
 
   useEffect(() => {
+    client.get('/health').catch(() => {})
+  }, [])
+
+  useEffect(() => {
     if (isAuthenticated) {
       setLoadingRepos(true)
       reposApi.list().then(setRepos).finally(() => setLoadingRepos(false))
@@ -92,20 +96,12 @@ export default function LandingPage() {
               </div>
             ) : (
               <div className="max-w-xl mx-auto">
-                {atLimit ? (
-                  <div className="text-sm text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-4 py-3">
-                    Repository limit reached (3/3). Delete one below to analyze a new repo.
+                <AnalyzeForm onSubmit={handleAnalyze} disabled={submitting} atLimit={atLimit} />
+                {limitError && <p className="mt-2 text-xs text-red-400">{limitError}</p>}
+                {submitting && (
+                  <div className="flex items-center justify-center gap-2 mt-3 text-sm text-ink-muted">
+                    <Spinner size="sm" /> Starting ingestion...
                   </div>
-                ) : (
-                  <>
-                    <AnalyzeForm onSubmit={handleAnalyze} disabled={submitting} />
-                    {limitError && <p className="mt-2 text-xs text-red-400">{limitError}</p>}
-                    {submitting && (
-                      <div className="flex items-center justify-center gap-2 mt-3 text-sm text-ink-muted">
-                        <Spinner size="sm" /> Starting ingestion...
-                      </div>
-                    )}
-                  </>
                 )}
               </div>
             )}
