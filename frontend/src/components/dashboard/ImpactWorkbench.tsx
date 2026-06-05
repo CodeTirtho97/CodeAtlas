@@ -4,6 +4,31 @@ import type { ImpactResult, RiskLevel } from '../../types'
 import Spinner from '../Spinner'
 import { methodStyle } from './shared'
 
+interface CachedAnalysis {
+  symbol: string
+  result: ImpactResult
+  ts: number
+}
+
+const CACHE_KEY = (repoId: string) => `impact_history_${repoId}`
+const MAX_CACHE = 5
+const TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+
+function loadCache(repoId: string): CachedAnalysis[] {
+  try {
+    const all: CachedAnalysis[] = JSON.parse(localStorage.getItem(CACHE_KEY(repoId)) ?? '[]')
+    const fresh = all.filter(e => Date.now() - e.ts < TTL_MS)
+    if (fresh.length !== all.length)
+      localStorage.setItem(CACHE_KEY(repoId), JSON.stringify(fresh))
+    return fresh
+  } catch { return [] }
+}
+
+function saveToCache(repoId: string, entry: CachedAnalysis) {
+  const existing = loadCache(repoId).filter(e => e.symbol !== entry.symbol)
+  localStorage.setItem(CACHE_KEY(repoId), JSON.stringify([entry, ...existing].slice(0, MAX_CACHE)))
+}
+
 // ─── Risk config ──────────────────────────────────────────────────────────────
 
 const RISK_CONFIG: Record<RiskLevel, {
@@ -102,6 +127,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
   const [error, setError] = useState<string | null>(null)
   const [checkedTests, setCheckedTests] = useState<Record<string, boolean>>({})
   const [depsExpanded, setDepsExpanded] = useState<'direct' | 'transitive' | null>('direct')
+  const [history, setHistory] = useState<CachedAnalysis[]>(() => loadCache(repoId))
 
   // When navigated here from the graph's "Check impact" button, pre-fill and auto-run
   useEffect(() => {
@@ -132,6 +158,9 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
     try {
       const data = await reposApi.analyzeImpact(repoId, symbol.trim())
       setResult(data)
+      const entry = { symbol: symbol.trim(), result: data, ts: Date.now() }
+      saveToCache(repoId, entry)
+      setHistory(loadCache(repoId))
     } catch (e: any) {
       setError(e.response?.data?.detail ?? 'Analysis failed. Please try again.')
     } finally {
@@ -198,6 +227,33 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
           </div>
         )}
       </div>
+
+      {/* ── History cards ── */}
+      {history.length > 0 && !result && !loading && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-ink-subtle">Previous analyses</p>
+            <span className="text-[10px] text-ink-subtle/50">· saved for 24h</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {history.map(h => {
+              const rc = RISK_CONFIG[h.result.risk]
+              return (
+                <button
+                  key={h.symbol + h.ts}
+                  onClick={() => { setSymbol(h.symbol); setResult(h.result); setCheckedTests({}); setDepsExpanded('direct') }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl border border-surface-border bg-surface-card hover:border-orange-500/30 hover:bg-orange-500/5 transition-all group"
+                >
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${rc.bar}`} />
+                  <code className="text-xs font-mono text-ink-muted group-hover:text-ink transition-colors">{h.symbol}</code>
+                  <span className={`text-[10px] font-bold ${rc.text}`}>{rc.label}</span>
+                  <span className="text-[10px] text-ink-subtle">{h.result.total_impact} files</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Empty / idle state ── */}
       {!result && !loading && (

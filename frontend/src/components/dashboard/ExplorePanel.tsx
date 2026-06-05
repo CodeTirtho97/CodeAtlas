@@ -269,9 +269,7 @@ function SystemMap({ repo, view, onCheckImpact }: { repo: Repository; view: 'gra
   const deps = repo.dependencies
   const [search, setSearch] = useState('')
   const [showAll, setShowAll] = useState(false)
-  const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set())
-  const toggleCard = (i: number) =>
-    setExpandedCards(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
+  const [allCardsExpanded, setAllCardsExpanded] = useState(false)
   const PAGE = 30
 
   const allEntries = useMemo(() => {
@@ -300,12 +298,23 @@ function SystemMap({ repo, view, onCheckImpact }: { repo: Repository; view: 'gra
       {/* Most connected files */}
       {topFiles.length > 0 && (
         <div className="space-y-3">
-          <div>
-            <p className="text-sm font-semibold text-ink">Most connected files</p>
-            <p className="text-xs text-ink-muted mt-0.5">
-              These files are used by the most other files in this repo.
-              Changing them is risky — a bug here can break many things at once.
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">Most connected files</p>
+              <p className="text-xs text-ink-muted mt-0.5">
+                These files are used by the most other files in this repo.
+                Changing them is risky — a bug here can break many things at once.
+              </p>
+            </div>
+            <button
+              onClick={() => setAllCardsExpanded(v => !v)}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-border bg-surface-raised hover:border-surface-border/80 text-[11px] font-medium text-ink-muted hover:text-ink transition-all"
+            >
+              <svg className={`w-3 h-3 transition-transform duration-200 ${allCardsExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+              {allCardsExpanded ? 'Collapse all' : 'Expand all'}
+            </button>
           </div>
           <div className="grid sm:grid-cols-3 gap-2.5">
             {topFiles.map(([fp, dep], i) => {
@@ -315,18 +324,14 @@ function SystemMap({ repo, view, onCheckImpact }: { repo: Repository; view: 'gra
               const total       = dependents + dependsOn
               const dependentPct = total > 0 ? Math.round((dependents / total) * 100) : 50
               const isHighRisk  = dependents >= 4
-              const isExpanded  = expandedCards.has(i)
 
               return (
                 <div key={fp} className="relative rounded-xl border border-surface-border bg-surface-card overflow-hidden">
                   {/* Top accent */}
                   <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${rank.accent}`} />
 
-                  {/* Collapsed header — always visible, clickable */}
-                  <button
-                    onClick={() => toggleCard(i)}
-                    className="w-full flex items-center gap-2.5 px-3.5 pt-4 pb-3 text-left group"
-                  >
+                  {/* Header */}
+                  <div className="w-full flex items-center gap-2.5 px-3.5 pt-4 pb-3">
                     <span className={`w-6 h-6 rounded-md border text-[11px] font-black flex items-center justify-center shrink-0 ${rank.badge}`}>
                       {i + 1}
                     </span>
@@ -344,16 +349,10 @@ function SystemMap({ repo, view, onCheckImpact }: { repo: Repository; view: 'gra
                         )}
                       </div>
                     </div>
-                    <svg
-                      className={`w-3.5 h-3.5 text-ink-subtle shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
+                  </div>
 
                   {/* Expanded detail */}
-                  {isExpanded && (
+                  {allCardsExpanded && (
                     <div className="px-3.5 pb-3.5 space-y-2.5 border-t border-surface-border/50 pt-2.5 animate-fade-in">
                       <p className="text-[10px] text-ink-subtle font-mono truncate">{fp}</p>
                       <div className="space-y-1">

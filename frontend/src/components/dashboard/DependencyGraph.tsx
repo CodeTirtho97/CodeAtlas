@@ -343,6 +343,7 @@ function MiniCard({ files, deps, onCheckImpact }: {
 
               {onCheckImpact && (
                 <button onClick={() => onCheckImpact(f)}
+                  title="Switches to Impact Area tab with this file pre-loaded for analysis"
                   className="mt-2 w-full text-[9px] font-semibold text-orange-300
                              bg-orange-500/10 border border-orange-500/20 rounded-lg py-1
                              hover:bg-orange-500/20 transition-colors">
@@ -559,6 +560,7 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
             {onCheckImpact && (
               <button
                 onClick={() => onCheckImpact(focusedId)}
+                title="Switches to Impact Area tab with this file pre-loaded for analysis"
                 className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-bold
                            text-orange-300 bg-orange-500/15 border border-orange-500/30
                            hover:bg-orange-500/25 transition-colors ml-1"

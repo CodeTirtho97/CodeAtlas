@@ -47,10 +47,12 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
   }, [initialQuestion])
 
   // Auto-submit when navigated from another tab — fires once per unique initialQuestion
-  // once a session is ready. Skips silently if no session exists yet.
+  // once a session is ready. Skips if limits are already known to be hit.
   useEffect(() => {
     if (!initialQuestion || !activeSessionId) return
     if (autoSubmittedRef.current === initialQuestion) return
+    const alreadyAtLimit = rateLimits.today >= 30 || rateLimits.session >= 15
+    if (alreadyAtLimit) return  // question stays pre-filled; user sees the limit banner
     autoSubmittedRef.current = initialQuestion
     handleSubmit(initialQuestion)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,8 +63,13 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
       try {
         const loaded = await chatApi.getSessions(repoId)
         setSessions(loaded)
-        if (loaded.length > 0 && !activeSessionId) {
+        if (loaded.length > 0) {
           setActiveSessionId(loaded[0].id)
+        } else if (initialQuestion) {
+          // No sessions + incoming question — auto-create so submit can fire
+          const newSession = await chatApi.createSession(repoId)
+          setSessions([newSession])
+          setActiveSessionId(newSession.id)
         }
       } catch (err) {
         console.error('Failed to load sessions', err)
@@ -71,6 +78,8 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
       }
     }
     loadSessions()
+  // initialQuestion intentionally omitted — captured at mount via closure
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoId])
 
   useEffect(() => {
@@ -166,7 +175,18 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== tempId))
       setQuestion(q)
-      setError(err.response?.data?.detail || 'Failed to send message')
+      const detail: string = err.response?.data?.detail ?? ''
+      if (err.response?.status === 429) {
+        if (detail.includes('Daily limit')) {
+          setError('daily_limit')
+        } else if (detail.includes('Session limit')) {
+          setError('session_limit')
+        } else {
+          setError(detail || 'Rate limit reached.')
+        }
+      } else {
+        setError(detail || 'Failed to send message')
+      }
     } finally {
       setLoading(false)
     }
@@ -406,7 +426,32 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                 )}
 
                 <div className="px-4 py-3">
-                {error && (
+                {error === 'daily_limit' && (
+                  <div className="mb-3 flex items-start gap-2.5 text-xs bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2.5">
+                    <svg className="w-4 h-4 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                    <div>
+                      <p className="font-semibold text-red-400">Daily limit reached (30/day)</p>
+                      <p className="text-red-400/70 mt-0.5">Your question is saved above. Come back tomorrow — limits reset at midnight UTC.</p>
+                    </div>
+                  </div>
+                )}
+                {error === 'session_limit' && (
+                  <div className="mb-3 flex items-start gap-2.5 text-xs bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2.5">
+                    <svg className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                    <div>
+                      <p className="font-semibold text-amber-400">Session limit reached (15/session)</p>
+                      <p className="text-amber-400/70 mt-0.5">Your question is saved above.</p>
+                      <button
+                        onClick={async () => { setError(null); await handleNewSession() }}
+                        className="mt-1.5 flex items-center gap-1 text-amber-300 font-semibold hover:text-amber-200 transition-colors"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                        Start a new session and continue
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {error && error !== 'daily_limit' && error !== 'session_limit' && (
                   <div className="mb-3 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded px-3 py-2">{error}</div>
                 )}
                 {atLimit && (
