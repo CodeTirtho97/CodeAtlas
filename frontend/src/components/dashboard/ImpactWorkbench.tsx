@@ -276,7 +276,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
 
           {/* Simple hint for returning users */}
           {history.length > 0 && (
-            <div className="flex items-center justify-center mb-3 px-6">
+            <div className="flex items-end justify-center px-6" style={{ minHeight: '180px', paddingBottom: '15px' }}>
               <p className="text-center leading-relaxed italic">
                 <span className="text-xs text-ink-subtle">Type a </span>
                 <span className="text-xs font-semibold text-ink-muted">function, class, or file</span>
