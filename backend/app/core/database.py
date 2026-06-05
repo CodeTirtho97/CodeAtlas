@@ -2,12 +2,19 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import NullPool
 from app.core.config import settings
 
+import ssl as _ssl
+
+_ssl_ctx = _ssl.create_default_context()
+
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
     poolclass=NullPool,
-    connect_args={"server_settings": {"jit": "off"}},
+    connect_args={
+        "ssl": _ssl_ctx,
+        "server_settings": {"jit": "off"},
+    },
 )
 
 # Create session factory
