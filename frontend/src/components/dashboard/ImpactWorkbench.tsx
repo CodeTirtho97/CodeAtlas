@@ -276,10 +276,25 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
 
           {/* Simple hint for returning users */}
           {history.length > 0 && (
-            <p className="text-sm text-ink-muted text-center leading-relaxed px-4 py-6">
-              Type a function, class, or file — get back every file that depends on it,
-              every API route that's affected, and a checklist of tests to run before you merge.
-            </p>
+            <div className="flex items-center justify-center py-10 px-6">
+              <p className="text-center leading-loose">
+                <span className="text-base text-ink-subtle">Type a </span>
+                <span className="text-base font-semibold text-ink-muted">function, class, or file</span>
+                <span className="text-base text-ink-subtle"> —</span>
+                <br />
+                <span className="text-base text-ink-subtle">get back every </span>
+                <span className="text-base font-semibold text-ink-muted">file that depends on it</span>
+                <span className="text-base text-ink-subtle">,</span>
+                <br />
+                <span className="text-base text-ink-subtle">every </span>
+                <span className="text-base font-semibold text-ink-muted">API route that's affected</span>
+                <span className="text-base text-ink-subtle">,</span>
+                <br />
+                <span className="text-base text-ink-subtle">and a </span>
+                <span className="text-base font-semibold text-ink-muted">checklist of tests</span>
+                <span className="text-base text-ink-subtle"> to run before you merge.</span>
+              </p>
+            </div>
           )}
 
           {/* Example searches — only for first-time users */}
