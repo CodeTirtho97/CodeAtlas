@@ -4,7 +4,7 @@ import { reposApi } from '../api/repos'
 import type { Repository } from '../types'
 import Header from '../components/Header'
 import { DashboardSkeleton } from '../components/dashboard/shared'
-import { PAGE_META, TAB_COLORS, type TabId } from '../components/dashboard/nav'
+import { PAGE_META, TAB_COLORS, ALL_ITEMS, type TabId } from '../components/dashboard/nav'
 import Sidebar from '../components/dashboard/Sidebar'
 import MobileNav from '../components/dashboard/MobileNav'
 import OverviewPanel from '../components/dashboard/OverviewPanel'
@@ -113,16 +113,14 @@ export default function DashboardPage() {
           <main className={`flex-1 min-w-0 flex flex-col pl-1 ${isAskTab ? 'overflow-hidden' : 'overflow-y-auto'}`}>
             {isAskTab ? (
               <div className="flex-1 min-h-0 flex flex-col p-4">
-                <div className="flex items-center gap-3 mb-3 px-1">
-                  <span className="text-pink-400">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
-                    </svg>
-                  </span>
-                  <div>
-                    <p className="text-xl font-bold text-pink-400">Ask AI</p>
-                    <p className="text-[11px] text-ink-muted">{meta.description}</p>
+                <div className="mb-3 px-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`${TAB_COLORS.ask.headingColor} [&_svg]:w-5 [&_svg]:h-5 flex items-center`}>
+                      {ALL_ITEMS.find(t => t.id === 'ask')?.icon}
+                    </span>
+                    <p className={`text-xl font-bold leading-none ${TAB_COLORS.ask.headingColor}`}>{meta.title}</p>
                   </div>
+                  <p className="text-[11px] text-ink-muted leading-relaxed">{meta.description}</p>
                 </div>
                 <div className="flex-1 min-h-0">
                   <AskAIWorkspace
@@ -136,8 +134,13 @@ export default function DashboardPage() {
             ) : (
               <div className="px-8 py-6 pb-24 lg:pb-8 animate-fade-in" key={activeTab}>
                 <div className="mb-7">
-                  <h2 className={`text-xl font-bold ${TAB_COLORS[activeTab].headingColor}`}>{meta.title}</h2>
-                  <p className="text-sm text-ink-muted mt-1 leading-relaxed">{meta.description}</p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`${TAB_COLORS[activeTab].headingColor} [&_svg]:w-5 [&_svg]:h-5 flex items-center`}>
+                      {ALL_ITEMS.find(t => t.id === activeTab)?.icon}
+                    </span>
+                    <h2 className={`text-xl font-bold leading-none ${TAB_COLORS[activeTab].headingColor}`}>{meta.title}</h2>
+                  </div>
+                  <p className="text-sm text-ink-muted leading-relaxed">{meta.description}</p>
                 </div>
 
                 {activeTab === 'overview'   && <OverviewPanel repo={repo} onNavigate={setActiveTab} />}
