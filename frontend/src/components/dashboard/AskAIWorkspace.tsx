@@ -437,7 +437,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                       {charCount > 0 ? `${charCount}/1000` : ''}
                     </span>
                     <button
-                      onClick={handleSubmit}
+                      onClick={() => handleSubmit()}
                       disabled={loading || !charOk || atLimit || !activeSessionId}
                       className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                         loading || !charOk || atLimit || !activeSessionId
