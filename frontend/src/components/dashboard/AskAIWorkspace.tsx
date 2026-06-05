@@ -36,41 +36,24 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const autoSubmittedRef = useRef<string | null>(null)
-
   const scrollToBottom = useCallback(() => {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
   }, [])
 
+  // Pre-fill the input when navigated from another tab — user submits manually
   useEffect(() => {
-    if (initialQuestion) setQuestion(initialQuestion)
+    if (initialQuestion) {
+      setQuestion(initialQuestion)
+      setTimeout(() => inputRef.current?.focus(), 50)
+    }
   }, [initialQuestion])
-
-  // Auto-submit when navigated from another tab — fires once per unique initialQuestion
-  // once a session is ready. Skips if limits are already known to be hit.
-  useEffect(() => {
-    if (!initialQuestion || !activeSessionId) return
-    if (autoSubmittedRef.current === initialQuestion) return
-    const alreadyAtLimit = rateLimits.today >= 30 || rateLimits.session >= 15
-    if (alreadyAtLimit) return  // question stays pre-filled; user sees the limit banner
-    autoSubmittedRef.current = initialQuestion
-    handleSubmit(initialQuestion)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialQuestion, activeSessionId])
 
   useEffect(() => {
     const loadSessions = async () => {
       try {
         const loaded = await chatApi.getSessions(repoId)
         setSessions(loaded)
-        if (loaded.length > 0) {
-          setActiveSessionId(loaded[0].id)
-        } else if (initialQuestion) {
-          // No sessions + incoming question — auto-create so submit can fire
-          const newSession = await chatApi.createSession(repoId)
-          setSessions([newSession])
-          setActiveSessionId(newSession.id)
-        }
+        if (loaded.length > 0) setActiveSessionId(loaded[0].id)
       } catch (err) {
         console.error('Failed to load sessions', err)
       } finally {
@@ -78,8 +61,6 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
       }
     }
     loadSessions()
-  // initialQuestion intentionally omitted — captured at mount via closure
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoId])
 
   useEffect(() => {
@@ -123,8 +104,8 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
     }
   }
 
-  const handleSubmit = async (forceQuestion?: string) => {
-    const q = (forceQuestion !== undefined ? forceQuestion : question).trim()
+  const handleSubmit = async () => {
+    const q = question.trim()
     if (!q || loading || !activeSessionId) return
 
     const tempId = `temp-${Date.now()}`

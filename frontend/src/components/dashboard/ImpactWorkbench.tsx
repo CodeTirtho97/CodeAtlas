@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { reposApi } from '../../api/repos'
 import type { ImpactResult, RiskLevel } from '../../types'
 import Spinner from '../Spinner'
@@ -129,7 +129,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
   const [depsExpanded, setDepsExpanded] = useState<'direct' | 'transitive' | null>('direct')
   const [history, setHistory] = useState<CachedAnalysis[]>(() => loadCache(repoId))
 
-  // When navigated here from the graph's "Check impact" button, pre-fill and auto-run
+  // Pre-fill input when navigated from graph/explore — user analyzes manually
   useEffect(() => {
     if (defaultSymbol) {
       setSymbol(defaultSymbol)
@@ -138,27 +138,18 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
     }
   }, [defaultSymbol])
 
-  // Auto-trigger analysis once symbol is set from defaultSymbol
-  const triggeredRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (defaultSymbol && symbol === defaultSymbol && triggeredRef.current !== defaultSymbol) {
-      triggeredRef.current = defaultSymbol
-      handleAnalyze()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, defaultSymbol])
-
   const handleAnalyze = async () => {
-    if (!symbol.trim()) return
+    const sym = symbol.trim()  // capture now — avoid stale closure after async call
+    if (!sym) return
     setLoading(true)
     setResult(null)
     setError(null)
     setCheckedTests({})
     setDepsExpanded('direct')
     try {
-      const data = await reposApi.analyzeImpact(repoId, symbol.trim())
+      const data = await reposApi.analyzeImpact(repoId, sym)
       setResult(data)
-      const entry = { symbol: symbol.trim(), result: data, ts: Date.now() }
+      const entry: CachedAnalysis = { symbol: sym, result: data, ts: Date.now() }
       saveToCache(repoId, entry)
       setHistory(loadCache(repoId))
     } catch (e: any) {
@@ -228,8 +219,8 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
         )}
       </div>
 
-      {/* ── History cards ── */}
-      {history.length > 0 && !result && !loading && (
+      {/* ── History cards — always visible so saved results are accessible ── */}
+      {history.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-2">
             <p className="text-[10px] font-bold uppercase tracking-widest text-ink-subtle">Previous analyses</p>
@@ -551,24 +542,13 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
             <div className="flex flex-wrap gap-2">
               {onAskAI && (
                 <button
-                  onClick={() => onAskAI(`Why does changing "${result.symbol}" have ${rc.label.toLowerCase()}? Walk me through the dependency chain.`)}
+                  onClick={() => onAskAI(`Why does changing "${result.symbol}" have ${rc.label.toLowerCase()} impact? Trace the full dependency chain from ${result.matched_file ?? result.symbol} and explain which modules are most tightly coupled to it.`)}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-pink-500/10 border border-pink-500/25 text-pink-300 text-xs font-semibold hover:bg-pink-500/20 hover:border-pink-500/40 transition-all"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
                   </svg>
                   Ask AI why
-                </button>
-              )}
-              {onAskAI && result.matched_file && (
-                <button
-                  onClick={() => onAskAI(`Trace the full dependency path starting from ${result.matched_file}. Which modules are most tightly coupled to it?`)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-semibold hover:bg-amber-500/20 hover:border-amber-500/40 transition-all"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-                  </svg>
-                  Trace dependency path
                 </button>
               )}
               {onAskAI && result.affected_endpoints.length > 0 && (
