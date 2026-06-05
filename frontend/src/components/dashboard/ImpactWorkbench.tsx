@@ -165,6 +165,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
 
   const rc = result ? RISK_CONFIG[result.risk] : null
   const checkedCount = Object.values(checkedTests).filter(Boolean).length
+  const preFilled = !!defaultSymbol && !!symbol && !result && !loading
 
   return (
     <div className="space-y-6 pb-10">
@@ -182,7 +183,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
           <button
             onClick={handleAnalyze}
             disabled={loading || !symbol.trim()}
-            className="px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center gap-2 shrink-0"
+            className={`px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center gap-2 shrink-0 ${preFilled ? 'ring-2 ring-orange-400/60 ring-offset-1 ring-offset-surface-card animate-pulse' : ''}`}
           >
             {loading
               ? <Spinner size="sm" className="border-white/40 border-t-white" />
@@ -191,6 +192,12 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
             {loading ? 'Analyzing…' : 'Analyze'}
           </button>
         </div>
+        {preFilled && (
+          <p className="text-[11px] text-orange-400/80 mt-2.5 flex items-center gap-1.5">
+            <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            File path pre-filled — click <strong className="font-semibold">Analyze</strong> to check its impact.
+          </p>
+        )}
         {error && (
           <p className="text-xs text-red-400 mt-3 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>
         )}
@@ -236,8 +243,8 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
       {/* ── Empty / idle state ── */}
       {!result && !loading && (
         <div className="space-y-4">
-          {/* How it works — only before the very first check */}
-          {history.length === 0 && (
+          {/* How it works — only before the very first check and when no path is pre-filled */}
+          {history.length === 0 && !preFilled && (
           <div className="rounded-2xl border border-surface-border bg-surface-card p-6">
             <p className="text-xs font-bold uppercase tracking-widest text-ink-subtle mb-4">How it works</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -293,8 +300,8 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
             </div>
           )}
 
-          {/* Example searches — only for first-time users */}
-          {history.length === 0 && <div className="rounded-2xl border border-surface-border bg-surface-card p-5">
+          {/* Example searches — only for first-time users with no pre-fill */}
+          {history.length === 0 && !preFilled && <div className="rounded-2xl border border-surface-border bg-surface-card p-5">
             <p className="text-xs font-bold uppercase tracking-widest text-ink-subtle mb-3">Try an example</p>
             <div className="flex flex-wrap gap-2">
               {[

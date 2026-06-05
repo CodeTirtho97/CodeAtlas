@@ -53,7 +53,14 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
       try {
         const loaded = await chatApi.getSessions(repoId)
         setSessions(loaded)
-        if (loaded.length > 0) setActiveSessionId(loaded[0].id)
+        if (loaded.length > 0) {
+          setActiveSessionId(loaded[0].id)
+        } else if (initialQuestion) {
+          // No sessions + incoming question — silently create one so Send is enabled
+          const newSession = await chatApi.createSession(repoId)
+          setSessions([newSession])
+          setActiveSessionId(newSession.id)
+        }
       } catch (err) {
         console.error('Failed to load sessions', err)
       } finally {
@@ -61,6 +68,8 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
       }
     }
     loadSessions()
+  // initialQuestion captured at mount via closure — intentionally omitted from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoId])
 
   useEffect(() => {
@@ -208,15 +217,15 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
           {/* Session list */}
           <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
             {loadingSessions ? (
-              <div className="flex items-center justify-center py-8">
+              <div className="flex items-center justify-center py-8 transition-opacity duration-200">
                 <Spinner size="sm" />
               </div>
             ) : sessions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
+              <div className="flex flex-col items-center justify-center py-10 text-center animate-fade-in">
                 <p className="text-xs font-medium text-ink-muted">No chats yet</p>
                 <p className="text-[11px] text-ink-subtle mt-1">Click New Chat to start</p>
               </div>
-            ) : sessions.map(s => {
+            ) : <div className="space-y-2 animate-fade-in">{sessions.map(s => {
               const isActive = activeSessionId === s.id
               const countColor = s.message_count >= 13 ? 'text-red-400' : s.message_count >= 10 ? 'text-yellow-400' : 'text-ink-muted'
               return (
@@ -248,14 +257,14 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                   </span>
                 </button>
               )
-            })}
+            })}</div>}
           </div>
         </div>
 
         {/* Center: Chat */}
         <div className="bg-surface-card overflow-hidden flex flex-col border-t border-surface-border xl:border-t-0 xl:border-r">
-          {!activeSessionId ? (
-            <div className="flex items-center justify-center h-full">
+          {!activeSessionId && !loadingSessions ? (
+            <div className="flex items-center justify-center h-full animate-fade-in">
               <div className="text-center">
                 <p className="text-sm text-ink-muted">Select or create a chat to start</p>
               </div>
@@ -462,7 +471,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                     className={`flex flex-col items-center justify-center gap-1 px-4 rounded-xl text-xs font-semibold transition-all shrink-0 ${
                       loading || !charOk || atLimit || !activeSessionId
                         ? 'bg-surface-raised border border-surface-border/50 text-ink-subtle cursor-not-allowed'
-                        : 'bg-pink-500 hover:bg-pink-400 active:scale-95 text-white shadow-sm shadow-pink-500/30 cursor-pointer'
+                        : `bg-pink-500 hover:bg-pink-400 active:scale-95 text-white shadow-sm shadow-pink-500/30 cursor-pointer ${question && messages.length === 0 ? 'ring-2 ring-pink-400/60 ring-offset-1 ring-offset-surface-card animate-pulse' : ''}`
                     }`}
                   >
                     {loading ? (
@@ -483,6 +492,13 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                     )}
                   </button>
                 </div>
+                {/* Hint when question is pre-filled and no messages yet */}
+                {question && messages.length === 0 && !loading && (
+                  <p className="text-[11px] text-pink-400/70 mt-2 flex items-center gap-1.5">
+                    <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Question ready — click <strong className="font-semibold">Send</strong> to get your answer.
+                  </p>
+                )}
                 {/* Char count below — only when approaching limit */}
                 {charCount > 800 && (
                   <p className={`text-[10px] font-mono text-right mt-1 ${charCount > 900 ? 'text-yellow-400' : 'text-ink-subtle'}`}>
