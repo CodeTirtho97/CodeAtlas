@@ -118,7 +118,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
     }
     setMessages(prev => [...prev, optimisticMsg])
     setQuestion('')
-    if (inputRef.current) inputRef.current.style.height = '36px'
+    if (inputRef.current) inputRef.current.style.height = ''
     scrollToBottom()
 
     setLoading(true)
@@ -395,7 +395,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                           setQuestion(q)
                           setTimeout(() => {
                             const el = inputRef.current
-                            if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 72) + 'px'; el.focus() }
+                            if (el) { el.style.height = ''; el.focus() }
                           }, 0)
                         }}
                         className="text-[11px] font-medium px-3 py-1.5 rounded-full border border-pink-500/30 bg-pink-500/8 text-pink-300 hover:bg-pink-500/18 hover:border-pink-400/50 hover:text-pink-200 transition-all"
@@ -452,7 +452,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                       placeholder="Ask a question… (Enter to send, Shift+Enter for new line)"
                       rows={2}
                       disabled={loading || atLimit}
-                      className="w-full h-full bg-transparent px-4 py-2.5 text-sm text-ink placeholder-ink-subtle focus:outline-none resize-none disabled:opacity-50"
+                      className="w-full h-full bg-transparent px-4 py-2.5 text-sm text-ink placeholder-ink-subtle focus:outline-none resize-none overflow-hidden disabled:opacity-50"
                     />
                   </div>
                   {/* Send button — same height as textarea, icon + label stacked */}
