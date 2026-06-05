@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { reposApi } from '../api/repos'
 import type { Repository } from '../types'
@@ -35,6 +35,14 @@ export default function DashboardPage() {
       ))
       .finally(() => setLoading(false))
   }, [repoId])
+
+  const prevTabRef = useRef<TabId>(activeTab)
+  useEffect(() => {
+    const prev = prevTabRef.current
+    prevTabRef.current = activeTab
+    if (prev === 'ask')    setAskPrefill(undefined)
+    if (prev === 'change') setImpactPrefill(undefined)
+  }, [activeTab])
 
   const handleAskAI = (question: string) => {
     setAskPrefill(question)

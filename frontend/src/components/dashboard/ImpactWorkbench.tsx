@@ -249,7 +249,8 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
       {/* ── Empty / idle state ── */}
       {!result && !loading && (
         <div className="space-y-4">
-          {/* What this does */}
+          {/* How it works — only before the very first check */}
+          {history.length === 0 && (
           <div className="rounded-2xl border border-surface-border bg-surface-card p-6">
             <p className="text-xs font-bold uppercase tracking-widest text-ink-subtle mb-4">How it works</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -284,6 +285,15 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
               ))}
             </div>
           </div>
+          )}
+
+          {/* Simple hint for returning users */}
+          {history.length > 0 && (
+            <p className="text-sm text-ink-muted text-center leading-relaxed px-4 py-6">
+              Type a function, class, or file — get back every file that depends on it,
+              every API route that's affected, and a checklist of tests to run before you merge.
+            </p>
+          )}
 
           {/* Example searches */}
           <div className="rounded-2xl border border-surface-border bg-surface-card p-5">
