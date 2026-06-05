@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import type { Repository } from '../../types'
 import { EmptyState, SectionLabel, StatCard, techColor, STEP_ACCENTS } from './shared'
 
@@ -12,13 +12,18 @@ function FileChip({ f, accent, repoName, onAskAI, onCheckImpact }: {
   onCheckImpact?: (path: string) => void
 }) {
   const [hovered, setHovered] = useState(false)
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const show = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    setHovered(true)
+  }
+  const hide = () => {
+    hideTimer.current = setTimeout(() => setHovered(false), 120)
+  }
 
   return (
-    <span
-      className="relative inline-flex"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
+    <span className="relative inline-flex" onMouseEnter={show} onMouseLeave={hide}>
       {/* Chip */}
       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${accent.border} ${accent.bg} text-[11px] font-mono ${accent.text} cursor-default`}>
         <svg className="w-3 h-3 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -27,9 +32,13 @@ function FileChip({ f, accent, repoName, onAskAI, onCheckImpact }: {
         {f}
       </span>
 
-      {/* Tooltip — only renders for this chip when hovered */}
+      {/* Tooltip — onMouseEnter/Leave keep it alive while mouse travels the gap */}
       {hovered && (
-        <span className="absolute bottom-full left-0 mb-1.5 z-20 flex items-center gap-1 px-1.5 py-1 rounded-lg border border-surface-border bg-surface-card shadow-xl whitespace-nowrap">
+        <span
+          onMouseEnter={show}
+          onMouseLeave={hide}
+          className="absolute bottom-full left-0 mb-1.5 z-20 flex items-center gap-1 px-1.5 py-1 rounded-lg border border-surface-border bg-surface-card shadow-xl whitespace-nowrap"
+        >
           {onAskAI && (
             <button
               onClick={() => onAskAI(`Explain ${f} in ${repoName}. What does it do and how does it fit into the architecture?`)}
