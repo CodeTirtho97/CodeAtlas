@@ -440,7 +440,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                     {rateLimits.session >= 15 ? '15 messages per session reached' : '30 questions per day reached'}
                   </div>
                 )}
-                <div className={`rounded-xl border transition-colors ${atLimit ? 'border-surface-border/40 opacity-60' : 'border-surface-border focus-within:border-pink-500/50 focus-within:ring-1 focus-within:ring-pink-500/20'} bg-surface-raised overflow-hidden`}>
+                <div className={`relative rounded-xl border transition-colors ${atLimit ? 'border-surface-border/40 opacity-60' : 'border-surface-border focus-within:border-pink-500/50 focus-within:ring-1 focus-within:ring-pink-500/20'} bg-surface-raised`}>
                   <textarea
                     ref={inputRef}
                     value={question}
@@ -448,47 +448,49 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                       setQuestion(e.target.value)
                       const el = e.target
                       el.style.height = 'auto'
-                      el.style.height = Math.min(el.scrollHeight, 72) + 'px'
+                      el.style.height = Math.min(el.scrollHeight, 120) + 'px'
                     }}
                     onFocus={() => { if (!userExpandedEvidence) setEvidenceOpen(false) }}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() } }}
                     placeholder="Ask a question… (Enter to send, Shift+Enter for new line)"
                     rows={1}
                     disabled={loading || atLimit}
-                    style={{ minHeight: '36px', maxHeight: '72px' }}
-                    className="w-full bg-transparent px-4 py-2 text-sm text-ink placeholder-ink-subtle focus:outline-none resize-none disabled:opacity-50 overflow-hidden"
+                    style={{ minHeight: '44px', maxHeight: '120px' }}
+                    className="w-full bg-transparent pl-4 pr-24 py-3 text-sm text-ink placeholder-ink-subtle focus:outline-none resize-none disabled:opacity-50 overflow-y-auto"
                   />
-                  <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-                    <span className={`text-[10px] font-mono transition-colors ${charCount > 900 ? 'text-yellow-400' : 'text-ink-subtle'}`}>
-                      {charCount > 0 ? `${charCount}/1000` : ''}
+                  {/* Char count — only shown when approaching limit */}
+                  {charCount > 800 && (
+                    <span className={`absolute bottom-2.5 right-16 text-[10px] font-mono pointer-events-none ${charCount > 900 ? 'text-yellow-400' : 'text-ink-subtle'}`}>
+                      {charCount}/1000
                     </span>
-                    <button
-                      onClick={() => handleSubmit()}
-                      disabled={loading || !charOk || atLimit || !activeSessionId}
-                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                        loading || !charOk || atLimit || !activeSessionId
-                          ? 'bg-surface-card text-ink-subtle border border-surface-border/50 cursor-not-allowed'
-                          : 'bg-pink-500 hover:bg-pink-400 active:scale-95 text-white shadow-sm shadow-pink-500/30 cursor-pointer'
-                      }`}
-                    >
-                      {loading ? (
-                        <>
-                          <svg className="w-3.5 h-3.5 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
-                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="4" fill="none" />
-                            <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                          Thinking…
-                        </>
-                      ) : (
-                        <>
-                          Send
-                          <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                          </svg>
-                        </>
-                      )}
-                    </button>
-                  </div>
+                  )}
+                  {/* Send button — floats inside bottom-right */}
+                  <button
+                    onClick={() => handleSubmit()}
+                    disabled={loading || !charOk || atLimit || !activeSessionId}
+                    className={`absolute bottom-2 right-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      loading || !charOk || atLimit || !activeSessionId
+                        ? 'bg-surface-card text-ink-subtle border border-surface-border/50 cursor-not-allowed'
+                        : 'bg-pink-500 hover:bg-pink-400 active:scale-95 text-white shadow-sm shadow-pink-500/30 cursor-pointer'
+                    }`}
+                  >
+                    {loading ? (
+                      <>
+                        <svg className="w-3 h-3 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity="0.25" strokeWidth="4" fill="none" />
+                          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Thinking…
+                      </>
+                    ) : (
+                      <>
+                        Send
+                        <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                        </svg>
+                      </>
+                    )}
+                  </button>
                 </div>
                 </div>{/* end px-4 py-3 */}
               </div>
