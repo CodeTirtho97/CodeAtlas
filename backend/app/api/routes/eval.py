@@ -18,12 +18,23 @@ router = APIRouter(prefix="/repos", tags=["evaluation"])
 
 class QuestionResultResponse(BaseModel):
     question: str
-    endpoint: str
+    question_type: str = "endpoint"
+    endpoint: str = ""
     expected_file: str
     retrieved_files: List[str]
     hit: bool
     rank: Optional[int]
     reciprocal_rank: float
+    answer: Optional[str] = None
+    citation_hit: bool = False
+
+
+class AblationResultResponse(BaseModel):
+    mode: str
+    recall_at_5: float
+    mrr: float
+    total_questions: int
+    passed: int
 
 
 class EvalReportResponse(BaseModel):
@@ -32,6 +43,8 @@ class EvalReportResponse(BaseModel):
     total_questions: int
     passed: int
     results: List[QuestionResultResponse]
+    ablation: List[AblationResultResponse] = []
+    citation_precision: Optional[float] = None
     ran_at: Optional[datetime] = None
 
 
@@ -44,6 +57,8 @@ def _repo_to_response(repo: Repository) -> EvalReportResponse:
         total_questions=d["total_questions"],
         passed=d["passed"],
         results=[QuestionResultResponse(**r) for r in d["results"]],
+        ablation=[AblationResultResponse(**a) for a in d.get("ablation", [])],
+        citation_precision=d.get("citation_precision"),
         ran_at=repo.eval_ran_at,
     )
 
@@ -94,6 +109,7 @@ async def run_retrieval_eval(
         repo_id=str(repo.id),
         api_endpoints_json=repo.api_endpoints_json,
         qdrant_client=qdrant_client,
+        dependency_json=repo.dependency_json,
     )
 
     # Persist result so next visit loads instantly
@@ -102,15 +118,29 @@ async def run_retrieval_eval(
         "mrr": report.mrr,
         "total_questions": report.total_questions,
         "passed": report.passed,
+        "citation_precision": report.citation_precision,
+        "ablation": [
+            {
+                "mode": a.mode,
+                "recall_at_5": a.recall_at_5,
+                "mrr": a.mrr,
+                "total_questions": a.total_questions,
+                "passed": a.passed,
+            }
+            for a in report.ablation
+        ],
         "results": [
             {
                 "question": r.question,
+                "question_type": r.question_type,
                 "endpoint": r.endpoint,
                 "expected_file": r.expected_file,
                 "retrieved_files": r.retrieved_files,
                 "hit": r.hit,
                 "rank": r.rank,
                 "reciprocal_rank": r.reciprocal_rank,
+                "answer": r.answer,
+                "citation_hit": r.citation_hit,
             }
             for r in report.results
         ],

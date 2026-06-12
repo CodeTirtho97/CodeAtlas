@@ -4,6 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import httpx
 from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError
 
@@ -16,6 +17,9 @@ _GITHUB_URL_RE = re.compile(
 )
 
 MAX_FILES = 10_000
+# GitHub reports size in KB; reject repos larger than this before cloning.
+# Prevents filling the server disk with multi-GB binary repos or malicious inputs.
+MAX_REPO_SIZE_KB = 500_000  # 500 MB
 
 
 class ClonerError(Exception):
@@ -33,8 +37,50 @@ def validate_github_url(url: str) -> None:
         )
 
 
+def _check_github_repo_size(github_url: str) -> None:
+    """Hit the GitHub API to check repo size before cloning.
+
+    Raises ClonerError if the repo is too large or inaccessible via the API.
+    This prevents filling server disk with multi-GB repos before the file-count
+    check can trigger.
+    """
+    # Extract owner/repo from URL
+    parts = github_url.rstrip("/").split("/")
+    owner, repo_name = parts[-2], parts[-1]
+    api_url = f"https://api.github.com/repos/{owner}/{repo_name}"
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                api_url,
+                headers={"Accept": "application/vnd.github+json"},
+            )
+        if resp.status_code == 404:
+            raise ClonerError(f"Repository not found or is private: {github_url}")
+        if resp.status_code == 403:
+            raise ClonerError(f"GitHub API rate limit hit. Please try again in a minute.")
+        if resp.status_code != 200:
+            # Non-fatal: if the API check fails for any other reason, allow the clone to proceed.
+            return
+
+        size_kb = resp.json().get("size", 0)
+        if size_kb > MAX_REPO_SIZE_KB:
+            raise ClonerError(
+                f"Repository is {size_kb // 1024:,} MB which exceeds the "
+                f"{MAX_REPO_SIZE_KB // 1024:,} MB size limit."
+            )
+    except ClonerError:
+        raise
+    except Exception:
+        # Network errors or unexpected API shape — don't block the clone.
+        pass
+
+
 def clone_repo(github_url: str, job_id: str) -> Path:
     """Shallow-clone a GitHub repository to a temporary directory.
+
+    Checks the GitHub API for repo size before cloning to avoid filling
+    server disk with oversized or malicious repos.
 
     Args:
         github_url: Public GitHub URL (https://github.com/owner/repo)
@@ -44,16 +90,16 @@ def clone_repo(github_url: str, job_id: str) -> Path:
         Path to the cloned repository directory
 
     Raises:
-        ClonerError: Bad URL, repo not found, private repo, or > MAX_FILES files
+        ClonerError: Bad URL, repo not found, private repo, too large, or > MAX_FILES files
     """
     github_url = github_url.rstrip("/")
     validate_github_url(github_url)
 
+    # ── Pre-clone size check via GitHub API ───────────────────────────────────
+    _check_github_repo_size(github_url)
+
     clone_dir = TEMP_BASE / job_id
 
-    # Ensure the base temp dir exists, but NOT the clone_dir itself —
-    # git requires the target directory to be absent or empty.
-    # Also wipes any leftover from a previous failed attempt for the same job.
     TEMP_BASE.mkdir(parents=True, exist_ok=True)
     _cleanup(clone_dir)
 

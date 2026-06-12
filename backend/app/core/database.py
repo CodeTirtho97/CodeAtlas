@@ -48,6 +48,14 @@ async def init_db():
         except Exception:
             pass  # Already nullable, or table doesn't exist yet
 
+        # indexed_commit_sha added for incremental re-indexing support
+        try:
+            await conn.execute(text(
+                "ALTER TABLE repositories ADD COLUMN IF NOT EXISTS indexed_commit_sha VARCHAR"
+            ))
+        except Exception:
+            pass
+
 
 async def close_db():
     """Close database connections."""

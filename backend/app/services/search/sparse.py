@@ -11,7 +11,7 @@ Why feature hashing?
 import hashlib
 import re
 from collections import Counter
-from typing import List, Tuple
+from typing import List
 
 from qdrant_client.models import SparseVector
 
@@ -37,19 +37,17 @@ def to_sparse_vector(text: str) -> SparseVector:
     tf = Counter(tokens)
     total = len(tokens)
 
-    indices: List[int] = []
-    values: List[float] = []
-    seen: set = set()
-
+    # Accumulate TF into buckets; on a hash collision both tokens' weights
+    # are summed into the shared bucket rather than the second being dropped.
+    bucket_values: dict = {}
     for token, count in tf.items():
         bucket = _hash_token(token)
-        if bucket in seen:
-            continue  # skip hash collision (rare, acceptable)
-        seen.add(bucket)
-        indices.append(bucket)
-        values.append(count / total)  # normalised TF
+        bucket_values[bucket] = bucket_values.get(bucket, 0.0) + count / total
 
-    return SparseVector(indices=indices, values=values)
+    return SparseVector(
+        indices=list(bucket_values.keys()),
+        values=list(bucket_values.values()),
+    )
 
 
 def _tokenize(text: str) -> List[str]:

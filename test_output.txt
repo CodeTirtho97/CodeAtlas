@@ -1,0 +1,2 @@
+Using CPython 3.12.13
+error: failed to remove file `D:\ML_PROJECTS\CodeAtlas\backend\.venv\lib64`: Access is denied. (os error 5)

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { chatApi } from '../../api/chat'
-import type { Repository, ChatSession, ChatMessage } from '../../types'
+import type { Repository, ChatSession, ChatMessage, SourceCitation, StreamEvent } from '../../types'
 import Spinner from '../Spinner'
 
 const SUGGESTED_QUESTIONS = [
@@ -33,6 +33,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
   const [evidenceOpen, setEvidenceOpen] = useState(false)
   const [userExpandedEvidence, setUserExpandedEvidence] = useState(false)
   const [previewOpen, setPreviewOpen] = useState<Record<string, boolean>>({})
+  const [streamingMsg, setStreamingMsg] = useState<{ content: string; sources: SourceCitation[] } | null>(null)
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -118,34 +119,59 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
     if (!q || loading || !activeSessionId) return
 
     const tempId = `temp-${Date.now()}`
-    const optimisticMsg: ChatMessage = {
-      id: tempId,
-      session_id: activeSessionId,
-      role: 'user',
-      content: q,
-      created_at: new Date().toISOString(),
-    }
-    setMessages(prev => [...prev, optimisticMsg])
+    setMessages(prev => [...prev, {
+      id: tempId, session_id: activeSessionId, role: 'user' as const,
+      content: q, created_at: new Date().toISOString(),
+    }])
     setQuestion('')
     if (inputRef.current) inputRef.current.style.height = ''
+    setStreamingMsg(null)
     scrollToBottom()
 
     setLoading(true)
     setError(null)
+
+    // Accumulate in local vars — avoids stale-closure issues inside the event callback
+    let accContent = ''
+    let accSources: SourceCitation[] = []
+    // Scalar captures for done-event fields (avoids TS narrowing-to-never on let objects)
+    let doneMsgId = `asst-${Date.now()}`
+    let doneUserMsgId = tempId
+    let doneQuestionsToday = 0
+    let doneQuestionsInSession = 0
+
     try {
-      const res = await chatApi.ask(activeSessionId, q)
+      await chatApi.streamAsk(activeSessionId, q, (evt: StreamEvent) => {
+        if (evt.type === 'sources') {
+          accSources = evt.sources
+          setStreamingMsg({ content: '', sources: accSources })
+          if (accSources.length > 0) setEvidenceOpen(true)
+          scrollToBottom()
+        } else if (evt.type === 'token') {
+          accContent += evt.content
+          setStreamingMsg({ content: accContent, sources: accSources })
+          scrollToBottom()
+        } else if (evt.type === 'done') {
+          doneMsgId = evt.message_id
+          doneUserMsgId = evt.user_message_id
+          doneQuestionsToday = evt.questions_today
+          doneQuestionsInSession = evt.questions_in_session
+        }
+      })
+
       setMessages(prev => [
         ...prev.filter(m => m.id !== tempId),
-        res.question_message,
-        res.answer_message,
+        { id: doneUserMsgId, session_id: activeSessionId, role: 'user' as const,      content: q,           created_at: new Date().toISOString() },
+        { id: doneMsgId,     session_id: activeSessionId, role: 'assistant' as const, content: accContent, sources: accSources, created_at: new Date().toISOString() },
       ])
-      setInspectedMessageId(res.answer_message.id)
-      const newLimits = { today: res.questions_today, session: res.questions_in_session }
+      setInspectedMessageId(doneMsgId)
+      setStreamingMsg(null)
+
+      const newLimits = { today: doneQuestionsToday, session: doneQuestionsInSession }
       setRateLimits(newLimits)
       onRateLimitsChange?.(newLimits)
 
-      if (res.questions_in_session === 1) {
-        // First message — backend has likely generated a title; re-fetch to surface it
+      if (doneQuestionsInSession === 1) {
         try {
           const updated = await chatApi.getSessions(repoId)
           setSessions(updated)
@@ -158,22 +184,20 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
         }
       } else {
         setSessions(prev => prev.map(s =>
-          s.id === activeSessionId ? { ...s, message_count: res.questions_in_session } : s
+          s.id === activeSessionId ? { ...s, message_count: doneQuestionsInSession } : s
         ))
       }
       scrollToBottom()
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== tempId))
+      setStreamingMsg(null)
       setQuestion(q)
-      const detail: string = err.response?.data?.detail ?? ''
-      if (err.response?.status === 429) {
-        if (detail.includes('Daily limit')) {
-          setError('daily_limit')
-        } else if (detail.includes('Session limit')) {
-          setError('session_limit')
-        } else {
-          setError(detail || 'Rate limit reached.')
-        }
+      const status: number = err.status ?? err.response?.status
+      const detail: string = err.message ?? err.response?.data?.detail ?? ''
+      if (status === 429) {
+        if (detail.includes('Daily limit'))   setError('daily_limit')
+        else if (detail.includes('Session limit')) setError('session_limit')
+        else setError(detail || 'Rate limit reached.')
       } else {
         setError(detail || 'Failed to send message')
       }
@@ -187,7 +211,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
   const atLimit = rateLimits.session >= 15 || rateLimits.today >= 30
   const latestAssistant = [...messages].reverse().find(m => m.role === 'assistant')
   const inspectedMessage = messages.find(m => m.id === inspectedMessageId && m.role === 'assistant') ?? latestAssistant
-  const inspectedSources = inspectedMessage?.sources ?? []
+  const inspectedSources = inspectedMessage?.sources ?? streamingMsg?.sources ?? []
 
   return (
     <div className="h-full flex flex-col">
@@ -360,7 +384,8 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                         </div>
                       </div>
                     ))}
-                    {loading && (
+                    {/* Thinking dots — only while waiting for first token */}
+                    {loading && !streamingMsg && (
                       <div className="flex justify-start items-end gap-3">
                         <div className="w-8 h-8 rounded-xl bg-pink-500/15 border border-pink-500/20 flex items-center justify-center shrink-0">
                           <svg className="w-4 h-4 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -376,6 +401,33 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                           <span className="text-[10px] text-pink-400/60 font-medium tracking-wide thinking-label">
                             Thinking…
                           </span>
+                        </div>
+                      </div>
+                    )}
+                    {/* Streaming bubble — live token-by-token render */}
+                    {streamingMsg && (
+                      <div className="flex justify-start items-end gap-3">
+                        <div className="w-8 h-8 rounded-xl bg-pink-500/15 border border-pink-500/20 flex items-center justify-center shrink-0">
+                          <svg className="w-4 h-4 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+                          </svg>
+                        </div>
+                        <div className="max-w-2xl bg-surface-card border border-pink-500/40 shadow-[0_0_0_1px_rgba(236,72,153,0.15)] rounded-2xl rounded-tl-sm px-4 py-3">
+                          {streamingMsg.content ? (
+                            <div className="ai-response">
+                              <ReactMarkdown>{streamingMsg.content}</ReactMarkdown>
+                              <span className="inline-block w-2 h-4 ml-0.5 bg-pink-400 animate-pulse rounded-sm align-text-bottom opacity-80" />
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-pink-300/60 font-medium italic">Retrieving sources…</p>
+                          )}
+                          {streamingMsg.sources.length > 0 && (
+                            <div className="mt-2.5 pt-2.5 border-t border-surface-border">
+                              <span className="text-[10px] font-medium text-ink-muted">
+                                {streamingMsg.sources.length} source{streamingMsg.sources.length !== 1 ? 's' : ''} retrieved
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -541,13 +593,16 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
 
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-              {/* 1. Answer preview — first */}
-              {inspectedMessage && (
+              {/* 1. Answer preview — first; shows live streaming content if no persisted message */}
+              {(inspectedMessage || streamingMsg) && (
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-muted mb-3">Answer Preview</p>
                   <div className="rounded-xl border border-pink-500/20 bg-pink-500/5 px-3 py-3">
                     <p className="text-[11px] leading-relaxed text-ink-muted line-clamp-3">
-                      {inspectedMessage.content}
+                      {inspectedMessage?.content ?? streamingMsg?.content ?? ''}
+                      {!inspectedMessage && streamingMsg && (
+                        <span className="inline-block w-1.5 h-3 ml-0.5 bg-pink-400/70 animate-pulse rounded-sm align-text-bottom" />
+                      )}
                     </p>
                   </div>
                 </div>

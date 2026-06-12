@@ -254,7 +254,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
                   color: 'text-orange-400',
                   bg: 'bg-orange-500/10 border-orange-500/20',
                   title: 'Type a symbol',
-                  body: "Enter a function name, class, or file path — anything in your codebase you're about to change.",
+                  body: "Enter any indexed function, class, or file path — not just API endpoints. Any symbol in your codebase you're about to change.",
                 },
                 {
                   step: '2',

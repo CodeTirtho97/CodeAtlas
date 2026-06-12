@@ -150,12 +150,23 @@ export interface ImpactResult {
 
 export interface QuestionResult {
   question: string
+  question_type: string       // "endpoint" | "paraphrase" | "class" | "import"
   endpoint: string
   expected_file: string
   retrieved_files: string[]
   hit: boolean
   rank: number | null
   reciprocal_rank: number
+  answer: string | null       // LLM-generated answer (only when generation quality run)
+  citation_hit: boolean       // whether answer cited the expected file
+}
+
+export interface AblationResult {
+  mode: string                // "hybrid" | "dense" | "sparse"
+  recall_at_5: number
+  mrr: number
+  total_questions: number
+  passed: number
 }
 
 export interface EvalReport {
@@ -164,5 +175,15 @@ export interface EvalReport {
   total_questions: number
   passed: number
   results: QuestionResult[]
+  ablation: AblationResult[]          // per-mode ablation comparison
+  citation_precision: number | null   // fraction of answers that cited the right file
   ran_at?: string | null
 }
+
+// ── Streaming chat ────────────────────────────────────────────────────────────
+
+export type StreamEvent =
+  | { type: 'sources'; sources: SourceCitation[] }
+  | { type: 'token'; content: string }
+  | { type: 'done'; user_message_id: string; message_id: string; questions_today: number; questions_in_session: number }
+  | { type: 'error'; message: string }

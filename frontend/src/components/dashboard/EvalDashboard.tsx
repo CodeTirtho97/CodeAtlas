@@ -388,7 +388,7 @@ export default function EvalDashboard({ repoId, onAskAI }: { repoId: string; onA
           </div>
 
           {/* ── Metrics ── */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
             <MetricCard
               label="Finds Right File"
               value={`${recallPct}%`}
@@ -419,7 +419,64 @@ export default function EvalDashboard({ repoId, onAskAI }: { repoId: string; onA
               color="text-ink"
               hint="Each test asks a natural-language question about one of your API endpoints and checks whether the AI finds the right file."
             />
+            <MetricCard
+              label="Citation Precision"
+              value={report.citation_precision !== null && report.citation_precision !== undefined
+                ? `${Math.round(report.citation_precision * 100)}%`
+                : '—'}
+              sub="answers cited the right file"
+              color={report.citation_precision !== null && report.citation_precision !== undefined
+                ? report.citation_precision >= 0.75 ? 'text-emerald-400'
+                  : report.citation_precision >= 0.5 ? 'text-amber-400'
+                  : 'text-red-400'
+                : 'text-ink-subtle'}
+              hint="Fraction of generated answers that explicitly cited the correct source file. Requires a generation-quality eval run."
+            />
           </div>
+
+          {/* ── Ablation table ── */}
+          {report.ablation && report.ablation.length > 0 && (
+            <div className="rounded-2xl border border-surface-border bg-surface-card overflow-hidden">
+              <div className="px-5 py-3 border-b border-surface-border bg-surface-raised/40 flex items-center gap-3">
+                <p className="text-xs font-semibold text-ink">Search Mode Comparison</p>
+                <span className="text-[10px] text-ink-subtle">How each retrieval strategy performs on Recall@5</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-surface-border bg-surface-raised/20">
+                      <th className="px-5 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-ink-subtle">Mode</th>
+                      <th className="px-5 py-2.5 text-right text-[10px] font-bold uppercase tracking-widest text-ink-subtle">Recall@5</th>
+                      <th className="px-5 py-2.5 text-right text-[10px] font-bold uppercase tracking-widest text-ink-subtle">MRR</th>
+                      <th className="px-5 py-2.5 text-right text-[10px] font-bold uppercase tracking-widest text-ink-subtle">Passed / Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.ablation.map(a => {
+                      const pct = Math.round(a.recall_at_5 * 100)
+                      const isActive = a.mode.toLowerCase().includes('hybrid')
+                      const col = pct >= 75 ? 'text-emerald-400' : pct >= 50 ? 'text-amber-400' : 'text-red-400'
+                      return (
+                        <tr key={a.mode} className="border-b border-surface-border/40 last:border-0 hover:bg-surface-raised/20 transition-colors">
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-semibold text-ink">{a.mode}</span>
+                              {isActive && (
+                                <span className="text-[9px] font-bold bg-pink-500/15 text-pink-300 border border-pink-500/25 px-1.5 py-0.5 rounded-full">active</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className={`px-5 py-3 text-right font-bold tabular-nums ${col}`}>{pct}%</td>
+                          <td className="px-5 py-3 text-right text-ink-muted tabular-nums">{(a.mrr * 100).toFixed(1)}%</td>
+                          <td className="px-5 py-3 text-right text-ink-muted tabular-nums">{a.passed} / {a.total_questions}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* ── Failed questions ── */}
           {failedResults.length > 0 && (

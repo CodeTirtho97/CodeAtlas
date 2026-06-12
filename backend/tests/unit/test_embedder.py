@@ -1,6 +1,6 @@
-"""Unit tests for the embedder — all Google API calls are mocked."""
+"""Unit tests for the embedder — all HTTP calls are mocked via httpx.Client."""
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 from typing import List
 
 from app.services.ingestion.chunk import Chunk
@@ -8,13 +8,15 @@ from app.services.ingestion.embedder import (
     embed_chunks,
     embed_query,
     _prepare_text,
-    _make_batches,
     EMBEDDING_DIMS,
     BATCH_SIZE,
+    _EMBED_MODEL,
+    MAX_RETRIES,
+    RATE_LIMIT_DELAY,
 )
 
 
-# ─── Fixtures ────────────────────────────────────────────────────────────────
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _fake_embedding(dims: int = EMBEDDING_DIMS) -> List[float]:
     return [0.1] * dims
@@ -41,99 +43,80 @@ def _make_chunk(
     )
 
 
-def _make_embed_response(count: int = 1) -> MagicMock:
-    """Build a mock response object matching google-genai's EmbedContentResponse."""
-    response = MagicMock()
-    response.embeddings = [
-        MagicMock(values=_fake_embedding()) for _ in range(count)
-    ]
-    return response
+def _success_response(count: int = 1) -> MagicMock:
+    """HTTP 200 response with `count` embeddings."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "embeddings": [{"values": _fake_embedding()} for _ in range(count)]
+    }
+    resp.text = ""
+    resp.headers = {}
+    return resp
 
 
-# ─── _make_batches ───────────────────────────────────────────────────────────
+def _error_response(status: int = 500, body: str = "Internal Server Error") -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.text = body
+    resp.headers = {}
+    return resp
 
-class TestMakeBatches:
-    def test_empty_list(self):
-        assert _make_batches([], 10) == []
 
-    def test_single_item(self):
-        assert _make_batches([1], 10) == [[1]]
+def _patch_client(mock_client: MagicMock):
+    """Patch httpx.Client so the context manager yields mock_client."""
+    patcher = patch("app.services.ingestion.embedder.httpx.Client")
+    return patcher
 
-    def test_exact_batch_size(self):
-        items = list(range(100))
-        batches = _make_batches(items, 100)
-        assert len(batches) == 1
-        assert batches[0] == items
 
-    def test_one_over_batch_size(self):
-        items = list(range(101))
-        batches = _make_batches(items, 100)
-        assert len(batches) == 2
-        assert len(batches[0]) == 100
-        assert len(batches[1]) == 1
-
-    def test_three_full_batches(self):
-        items = list(range(300))
-        batches = _make_batches(items, 100)
-        assert len(batches) == 3
-        assert all(len(b) == 100 for b in batches)
-
-    def test_preserves_order(self):
-        items = [10, 20, 30, 40, 50]
-        batches = _make_batches(items, 3)
-        flat = [x for b in batches for x in b]
-        assert flat == items
+def _wire_client(MockClient, mock_client):
+    """Connect MockClient class → instance → context manager → mock_client."""
+    MockClient.return_value.__enter__.return_value = mock_client
+    MockClient.return_value.__exit__.return_value = False
 
 
 # ─── _prepare_text ───────────────────────────────────────────────────────────
 
 class TestPrepareText:
     def test_includes_language(self):
-        chunk = _make_chunk(language="python")
-        assert "python" in _prepare_text(chunk)
+        assert "python" in _prepare_text(_make_chunk(language="python"))
 
     def test_includes_chunk_type(self):
-        chunk = _make_chunk(chunk_type="endpoint")
-        assert "endpoint" in _prepare_text(chunk)
+        assert "endpoint" in _prepare_text(_make_chunk(chunk_type="endpoint"))
 
     def test_includes_function_name(self):
-        chunk = _make_chunk(function_name="authenticate_user")
-        assert "authenticate_user" in _prepare_text(chunk)
+        assert "authenticate_user" in _prepare_text(_make_chunk(function_name="authenticate_user"))
 
     def test_includes_class_name_when_no_function(self):
-        chunk = _make_chunk(function_name=None, class_name="AuthService")
-        assert "AuthService" in _prepare_text(chunk)
+        assert "AuthService" in _prepare_text(_make_chunk(function_name=None, class_name="AuthService"))
 
     def test_includes_file_path(self):
-        chunk = _make_chunk(file_path="src/auth/service.py")
-        assert "src/auth/service.py" in _prepare_text(chunk)
+        assert "src/auth/service.py" in _prepare_text(_make_chunk(file_path="src/auth/service.py"))
 
     def test_includes_chunk_text(self):
-        chunk = _make_chunk(text="def hello(): pass")
-        assert "def hello(): pass" in _prepare_text(chunk)
+        assert "def hello(): pass" in _prepare_text(_make_chunk(text="def hello(): pass"))
 
     def test_truncates_long_chunk_text(self):
         long_text = "x" * 10_000
-        chunk = _make_chunk(text=long_text)
-        result = _prepare_text(chunk)
+        result = _prepare_text(_make_chunk(text=long_text))
         assert len(result) < len(long_text) + 200
 
     def test_header_on_first_line(self):
-        chunk = _make_chunk()
-        lines = _prepare_text(chunk).splitlines()
+        lines = _prepare_text(_make_chunk()).splitlines()
         assert lines[0].startswith("[")
         assert lines[0].endswith("]")
 
 
-# ─── embed_chunks ────────────────────────────────────────────────────────────
+# ─── embed_chunks ─────────────────────────────────────────────────────────────
 
 class TestEmbedChunks:
 
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_returns_chunk_embedding_pairs(self, mock_make_client):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.return_value = _make_embed_response(1)
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_returns_chunk_embedding_pairs(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _success_response(1)
+        _wire_client(MockClient, mc)
 
         chunk = _make_chunk()
         results = embed_chunks([chunk])
@@ -143,87 +126,79 @@ class TestEmbedChunks:
         assert c is chunk
         assert len(emb) == EMBEDDING_DIMS
 
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_multiple_chunks_in_one_batch(self, mock_make_client):
-        chunks = [_make_chunk(text=f"code {i}") for i in range(5)]
-        mock_client = MagicMock()
-        mock_client.models.embed_content.return_value = _make_embed_response(5)
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_multiple_chunks_single_batch(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _success_response(5)
+        _wire_client(MockClient, mc)
 
-        results = embed_chunks(chunks)
+        results = embed_chunks([_make_chunk(text=f"code {i}") for i in range(5)])
 
         assert len(results) == 5
-        mock_client.models.embed_content.assert_called_once()
-
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_batches_at_batch_size_boundary(self, mock_make_client):
-        chunks = [_make_chunk(text=f"code {i}") for i in range(BATCH_SIZE + 1)]
-        mock_client = MagicMock()
-        mock_client.models.embed_content.side_effect = [
-            _make_embed_response(BATCH_SIZE),
-            _make_embed_response(1),
-        ]
-        mock_make_client.return_value = mock_client
-
-        results = embed_chunks(chunks)
-
-        assert len(results) == BATCH_SIZE + 1
-        assert mock_client.models.embed_content.call_count == 2
-
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_empty_input_returns_empty(self, mock_make_client):
-        mock_client = MagicMock()
-        mock_make_client.return_value = mock_client
-
-        results = embed_chunks([])
-
-        assert results == []
-        mock_client.models.embed_content.assert_not_called()
+        mc.post.assert_called_once()
 
     @patch("app.services.ingestion.embedder.time.sleep")
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_retries_on_rate_limit(self, mock_make_client, mock_sleep):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.side_effect = [
-            Exception("429 ResourceExhausted: quota exceeded"),
-            Exception("429 ResourceExhausted: quota exceeded"),
-            _make_embed_response(1),
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_splits_into_multiple_batches(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.side_effect = [
+            _success_response(BATCH_SIZE),
+            _success_response(1),
         ]
-        mock_make_client.return_value = mock_client
+        _wire_client(MockClient, mc)
+
+        results = embed_chunks([_make_chunk(text=f"code {i}") for i in range(BATCH_SIZE + 1)])
+
+        assert len(results) == BATCH_SIZE + 1
+        assert mc.post.call_count == 2
+
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_empty_input_returns_empty(self, MockClient, _sleep):
+        mc = MagicMock()
+        _wire_client(MockClient, mc)
+
+        assert embed_chunks([]) == []
+        mc.post.assert_not_called()
+
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_retries_on_http_error(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.side_effect = [
+            _error_response(500),
+            _error_response(500),
+            _success_response(1),
+        ]
+        _wire_client(MockClient, mc)
 
         results = embed_chunks([_make_chunk()])
 
         assert len(results) == 1
-        assert mock_client.models.embed_content.call_count == 3
-        assert mock_sleep.call_count == 2
+        assert mc.post.call_count == 3
 
     @patch("app.services.ingestion.embedder.time.sleep")
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_skips_batch_after_max_retries(self, mock_make_client, mock_sleep):
-        from app.services.ingestion.embedder import MAX_RETRIES
-        mock_client = MagicMock()
-        mock_client.models.embed_content.side_effect = Exception("API Error")
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_raises_when_all_batches_fail(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _error_response(500)
+        _wire_client(MockClient, mc)
 
-        results = embed_chunks([_make_chunk()])
+        with pytest.raises(RuntimeError, match="no results for any batch"):
+            embed_chunks([_make_chunk()])
 
-        assert results == []
-        assert mock_client.models.embed_content.call_count == MAX_RETRIES
+        assert mc.post.call_count == MAX_RETRIES
 
     @patch("app.services.ingestion.embedder.time.sleep")
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_failed_batch_does_not_affect_other_batches(
-        self, mock_make_client, mock_sleep
-    ):
-        from app.services.ingestion.embedder import MAX_RETRIES
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_skipped_batch_does_not_cancel_other_batches(self, MockClient, _sleep):
         chunk_a = _make_chunk(text="batch one")
         chunk_b = _make_chunk(text="batch two")
 
-        mock_client = MagicMock()
-        mock_client.models.embed_content.side_effect = (
-            [Exception("error")] * MAX_RETRIES + [_make_embed_response(1)]
-        )
-        mock_make_client.return_value = mock_client
+        mc = MagicMock()
+        mc.post.side_effect = [_error_response(500)] * MAX_RETRIES + [_success_response(1)]
+        _wire_client(MockClient, mc)
 
         with patch("app.services.ingestion.embedder.BATCH_SIZE", 1):
             results = embed_chunks([chunk_a, chunk_b])
@@ -231,74 +206,103 @@ class TestEmbedChunks:
         assert len(results) == 1
         assert results[0][0] is chunk_b
 
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_uses_retrieval_document_task_type(self, mock_make_client):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.return_value = _make_embed_response(1)
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_payload_uses_retrieval_document_task_type(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _success_response(1)
+        _wire_client(MockClient, mc)
 
         embed_chunks([_make_chunk()])
 
-        _, kwargs = mock_client.models.embed_content.call_args
-        config = kwargs.get("config")
-        assert config.task_type == "RETRIEVAL_DOCUMENT"
+        payload = mc.post.call_args[1]["json"]
+        assert payload["requests"][0]["taskType"] == "RETRIEVAL_DOCUMENT"
 
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_uses_correct_model(self, mock_make_client):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.return_value = _make_embed_response(1)
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_payload_uses_correct_model(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _success_response(1)
+        _wire_client(MockClient, mc)
 
         embed_chunks([_make_chunk()])
 
-        _, kwargs = mock_client.models.embed_content.call_args
-        assert kwargs.get("model") == "models/text-embedding-004"
+        payload = mc.post.call_args[1]["json"]
+        assert payload["requests"][0]["model"] == _EMBED_MODEL
+
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_rate_limit_waits_longer_than_base_delay(self, MockClient, mock_sleep):
+        mc = MagicMock()
+        mc.post.side_effect = [_error_response(429, "quota exceeded"), _success_response(1)]
+        _wire_client(MockClient, mc)
+
+        embed_chunks([_make_chunk()])
+
+        durations = [c.args[0] for c in mock_sleep.call_args_list]
+        assert any(d >= RATE_LIMIT_DELAY for d in durations)
+
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_retries_on_network_exception(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.side_effect = [
+            Exception("Connection refused"),
+            Exception("Connection refused"),
+            _success_response(1),
+        ]
+        _wire_client(MockClient, mc)
+
+        results = embed_chunks([_make_chunk()])
+        assert len(results) == 1
 
 
-# ─── embed_query ─────────────────────────────────────────────────────────────
+# ─── embed_query ──────────────────────────────────────────────────────────────
 
 class TestEmbedQuery:
 
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_returns_embedding_vector(self, mock_make_client):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.return_value = _make_embed_response(1)
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_returns_float_list(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _success_response(1)
+        _wire_client(MockClient, mc)
 
         result = embed_query("How does authentication work?")
 
         assert isinstance(result, list)
         assert len(result) == EMBEDDING_DIMS
 
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_uses_retrieval_query_task_type(self, mock_make_client):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.return_value = _make_embed_response(1)
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_payload_uses_retrieval_query_task_type(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _success_response(1)
+        _wire_client(MockClient, mc)
 
         embed_query("some question")
 
-        _, kwargs = mock_client.models.embed_content.call_args
-        config = kwargs.get("config")
-        assert config.task_type == "RETRIEVAL_QUERY"
-
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_uses_correct_model(self, mock_make_client):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.return_value = _make_embed_response(1)
-        mock_make_client.return_value = mock_client
-
-        embed_query("test")
-
-        _, kwargs = mock_client.models.embed_content.call_args
-        assert kwargs.get("model") == "models/text-embedding-004"
+        payload = mc.post.call_args[1]["json"]
+        assert payload["requests"][0]["taskType"] == "RETRIEVAL_QUERY"
 
     @patch("app.services.ingestion.embedder.time.sleep")
-    @patch("app.services.ingestion.embedder._make_client")
-    def test_raises_on_persistent_failure(self, mock_make_client, mock_sleep):
-        mock_client = MagicMock()
-        mock_client.models.embed_content.side_effect = Exception("Network error")
-        mock_make_client.return_value = mock_client
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_payload_uses_correct_model(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _success_response(1)
+        _wire_client(MockClient, mc)
+
+        embed_query("test query")
+
+        payload = mc.post.call_args[1]["json"]
+        assert payload["requests"][0]["model"] == _EMBED_MODEL
+
+    @patch("app.services.ingestion.embedder.time.sleep")
+    @patch("app.services.ingestion.embedder.httpx.Client")
+    def test_raises_on_persistent_failure(self, MockClient, _sleep):
+        mc = MagicMock()
+        mc.post.return_value = _error_response(500)
+        _wire_client(MockClient, mc)
 
         with pytest.raises(RuntimeError, match="Failed to embed query"):
             embed_query("some question")

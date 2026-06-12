@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from google import genai
 from google.genai import types as genai_types
-from qdrant_client import AsyncQdrantClient
 
 from app.core.config import settings
 
@@ -72,6 +71,7 @@ async def analyze_impact(
     dependency_json: Dict[str, dict],
     api_endpoints_json: List[Dict[str, Any]],
     repo_name: str,
+    chunk_fn_index: Optional[Dict[str, str]] = None,
 ) -> ImpactResult:
     """Run the full blast-radius analysis for a symbol.
 
@@ -80,12 +80,15 @@ async def analyze_impact(
         dependency_json:    Repo's pre-built adjacency dict from the DB.
         api_endpoints_json: Repo's extracted API endpoint list from the DB.
         repo_name:          Used in the LLM prompt for context.
+        chunk_fn_index:     Optional lowercase(fn/class name) → file_path map
+                            built from the Chunk DB for genuine function-level
+                            resolution (not just API endpoint functions).
 
     Returns:
         ImpactResult with structured blast-radius data + LLM summary.
     """
     # 1. Find the target file
-    target_file = _find_target_file(symbol, dependency_json, api_endpoints_json)
+    target_file = _find_target_file(symbol, dependency_json, api_endpoints_json, chunk_fn_index)
 
     # 2. BFS over used_by edges
     direct, transitive = ([], [])
@@ -146,11 +149,19 @@ def _find_target_file(
     symbol: str,
     dep_graph: Dict[str, dict],
     api_endpoints: List[Dict[str, Any]],
+    chunk_fn_index: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
     """Resolve a symbol to a file path.
 
-    Searches across both the dependency graph keys AND api_endpoints file paths
-    so that files with no import relationships are still reachable.
+    Resolution order (most → least precise):
+    1. Exact file path match against known files.
+    2. Substring match on file paths (covers partial paths / directory prefixes).
+    3. Exact function_name match in API endpoints.
+    4. Partial function_name match in API endpoints.
+    5. Exact function/class name match in the Chunk DB index (any function, not
+       just endpoints — this is the primary fix for the granularity mismatch).
+    6. Partial function/class name match in the Chunk DB index.
+    7. Basename match across all known files (last resort).
     """
     clean = symbol.strip()
     lower = clean.lower()
@@ -171,7 +182,7 @@ def _find_target_file(
     if matches:
         return min(matches, key=len)
 
-    # Strategy 3: exact or partial function_name match in API endpoints
+    # Strategy 3: exact function_name match in API endpoints
     # Note: JS/TS parsers store route paths in function_name (e.g. "/login"),
     # so we strip leading slashes before comparing.
     for ep in (api_endpoints or []):
@@ -182,7 +193,7 @@ def _find_target_file(
             if fp:
                 return fp
 
-    # Strategy 4: partial function_name match (symbol is contained in name or vice versa)
+    # Strategy 4: partial function_name match in API endpoints
     for ep in (api_endpoints or []):
         raw_fn = ep.get("function_name") or ""
         fn = raw_fn.lstrip("/").lower()
@@ -191,7 +202,23 @@ def _find_target_file(
             if fp:
                 return fp
 
-    # Strategy 5: basename match across all known files
+    # Strategy 5: exact function/class name match in Chunk DB index.
+    # Covers arbitrary functions — not just those exposed as HTTP endpoints.
+    if chunk_fn_index and lower in chunk_fn_index:
+        return chunk_fn_index[lower]
+
+    # Strategy 6: partial function/class name match in Chunk DB index.
+    if chunk_fn_index:
+        partial = [
+            (name, fp) for name, fp in chunk_fn_index.items()
+            if lower in name or name in lower
+        ]
+        if partial:
+            # Prefer the entry whose name most closely matches the query
+            partial.sort(key=lambda x: abs(len(x[0]) - len(lower)))
+            return partial[0][1]
+
+    # Strategy 7: basename match across all known files (last resort)
     _STRIP_EXTS = (".py", ".ts", ".tsx", ".js", ".jsx", ".java", ".go")
     for fp in all_files:
         basename = fp.split("/")[-1]

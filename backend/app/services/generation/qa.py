@@ -12,7 +12,7 @@ specific file/function/line references in its answer.
 """
 import json
 import logging
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 
 from google import genai
 from google.genai import types as genai_types
@@ -131,8 +131,8 @@ async def answer_question(
           "sources": [{file_path, function_name, class_name, line_start, line_end}]
         }
     """
-    # 1. Retrieve relevant chunks
-    results = await search(client, question, repository_id, top_k=top_k)
+    # 1. Retrieve relevant chunks (with LLM reranking for best precision)
+    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
 
     if not results:
         return {
@@ -194,8 +194,8 @@ async def answer_with_history(
           "sources": [{file_path, function_name, class_name, line_start, line_end}]
         }
     """
-    # 1. Retrieve relevant chunks
-    results = await search(client, question, repository_id, top_k=top_k)
+    # 1. Retrieve relevant chunks (with LLM reranking for best precision)
+    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
 
     if not results:
         return {
@@ -320,6 +320,189 @@ async def _call_gemini(prompt: str) -> Optional[dict]:
             log.warning("Gemini Q&A attempt %d/3 failed: %s", attempt, exc)
 
     return None
+
+
+_QA_STREAM_PROMPT = """\
+You are an expert on the {repo_name} codebase.
+
+Answer the developer's question using ONLY the code context provided below.
+Be specific: reference the exact functions, classes, and files from the context.
+Markdown is allowed.
+
+---
+Question: {question}
+
+---
+Code Context:
+{context}
+"""
+
+_QA_STREAM_PROMPT_WITH_HISTORY = """\
+You are an expert on the {repo_name} codebase.
+
+You are having a conversation with a developer. Use the history to provide coherent follow-up answers.
+Answer using ONLY the code context provided below.
+Be specific: reference exact functions, classes, and files. Markdown is allowed.
+
+---
+CONVERSATION HISTORY:
+{history}
+
+---
+CURRENT QUESTION: {question}
+
+---
+CODE CONTEXT:
+{context}
+"""
+
+
+async def stream_answer_question(
+    client: AsyncQdrantClient,
+    question: str,
+    repository_id: str,
+    repo_name: str,
+    top_k: int = DEFAULT_TOP_K,
+) -> AsyncGenerator[str, None]:
+    """Yield SSE-formatted strings for a streaming answer.
+
+    Protocol (each string is a complete SSE event ending with \\n\\n):
+      data: {"type": "sources", "sources": [...]}   — emitted first, before tokens
+      data: {"type": "token", "content": "..."}     — one event per streamed text chunk
+      data: {"type": "done"}                        — terminal event, always sent last
+    """
+    # 1. Retrieve relevant chunks (with LLM reranking for best precision)
+    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
+
+    if not results:
+        no_ctx = {"type": "token", "content": (
+            "I couldn't find relevant context for this question in the indexed "
+            "repository. Try rephrasing or ask about a specific file or function."
+        )}
+        yield f"data: {json.dumps(no_ctx)}\n\n"
+        yield 'data: {"type": "done"}\n\n'
+        return
+
+    # 2. Emit sources immediately so the UI can render them while tokens arrive
+    sources_payload = [
+        {
+            "file_path":     r.file_path,
+            "function_name": r.function_name,
+            "class_name":    r.class_name,
+            "line_start":    r.line_start,
+            "line_end":      r.line_end,
+            "chunk_type":    r.chunk_type,
+            "chunk_preview": r.chunk_preview,
+        }
+        for r in results
+    ]
+    yield f'data: {json.dumps({"type": "sources", "sources": sources_payload})}\n\n'
+
+    # 3. Stream Gemini answer tokens
+    context = _build_context(results)
+    prompt = _QA_STREAM_PROMPT.format(
+        repo_name=repo_name,
+        question=question,
+        context=context,
+    )
+
+    gemini_client = _get_gemini_client()
+    try:
+        async for chunk in gemini_client.aio.models.generate_content_stream(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.1,
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+            ),
+        ):
+            text = chunk.text
+            if text:
+                yield f'data: {json.dumps({"type": "token", "content": text})}\n\n'
+    except Exception as exc:
+        log.warning("Gemini streaming failed: %s", exc)
+        yield f'data: {json.dumps({"type": "token", "content": chr(10) + chr(10) + "*Unable to complete the answer. Please try again.*"})}\n\n'
+
+    yield 'data: {"type": "done"}\n\n'
+
+
+async def stream_answer_with_history(
+    client: AsyncQdrantClient,
+    question: str,
+    repository_id: str,
+    repo_name: str,
+    history: List[dict],
+    top_k: int = DEFAULT_TOP_K,
+) -> AsyncGenerator[str, None]:
+    """Stream a history-aware answer as SSE.
+
+    Same protocol as stream_answer_question:
+      data: {"type": "sources", "sources": [...]}
+      data: {"type": "token", "content": "..."}
+      data: {"type": "done"}
+    """
+    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
+
+    if not results:
+        no_ctx = {"type": "token", "content": (
+            "I couldn't find relevant context for this question in the indexed "
+            "repository. Try rephrasing or ask about a specific file or function."
+        )}
+        yield f"data: {json.dumps(no_ctx)}\n\n"
+        yield 'data: {"type": "done"}\n\n'
+        return
+
+    sources_payload = [
+        {
+            "file_path":     r.file_path,
+            "function_name": r.function_name,
+            "class_name":    r.class_name,
+            "line_start":    r.line_start,
+            "line_end":      r.line_end,
+            "chunk_type":    r.chunk_type,
+            "chunk_preview": r.chunk_preview,
+        }
+        for r in results
+    ]
+    yield f'data: {json.dumps({"type": "sources", "sources": sources_payload})}\n\n'
+
+    context = _build_context(results)
+    if history:
+        history_lines = [
+            f"{'Developer' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in history
+        ]
+        prompt = _QA_STREAM_PROMPT_WITH_HISTORY.format(
+            repo_name=repo_name,
+            history="\n".join(history_lines),
+            question=question,
+            context=context,
+        )
+    else:
+        prompt = _QA_STREAM_PROMPT.format(
+            repo_name=repo_name,
+            question=question,
+            context=context,
+        )
+
+    gemini_client = _get_gemini_client()
+    try:
+        async for chunk in gemini_client.aio.models.generate_content_stream(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.1,
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+            ),
+        ):
+            text = chunk.text
+            if text:
+                yield f'data: {json.dumps({"type": "token", "content": text})}\n\n'
+    except Exception as exc:
+        log.warning("Gemini streaming (history) failed: %s", exc)
+        yield f'data: {json.dumps({"type": "token", "content": chr(10) + chr(10) + "*Unable to complete the answer. Please try again.*"})}\n\n'
+
+    yield 'data: {"type": "done"}\n\n'
 
 
 def _parse_json(text: str) -> Optional[dict]:

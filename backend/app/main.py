@@ -1,12 +1,17 @@
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="tree_sitter")
 
+from datetime import datetime, timedelta
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import update
 from app.core.config import settings
-from app.core.database import init_db, close_db, get_session
+from app.core.database import init_db, close_db, get_session, AsyncSessionLocal
 from app.core.qdrant import init_qdrant
+from app.models.db.ingestion_job import IngestionJob
+from app.models.db.repository import Repository
 from app.api.routes import auth, repos, query, chat, impact, eval
 
 # Initialize FastAPI app
@@ -86,9 +91,37 @@ async def startup_event():
     try:
         await init_db()
         await init_qdrant()
+        await _recover_stale_jobs()
     except Exception as e:
         print(f"Startup error: {e}")
         raise
+
+
+async def _recover_stale_jobs() -> None:
+    """Mark jobs stuck in 'running' for >30 min as failed (server was restarted mid-ingestion)."""
+    stale_cutoff = datetime.utcnow() - timedelta(minutes=30)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            update(IngestionJob)
+            .where(IngestionJob.status == "running")
+            .where(IngestionJob.updated_at < stale_cutoff)
+            .values(
+                status="failed",
+                progress_pct=0,
+                progress_message="Ingestion failed",
+                error="Job was interrupted by a server restart. Please re-index the repository.",
+            )
+            .returning(IngestionJob.repository_id)
+        )
+        stale_repo_ids = [row[0] for row in result.fetchall()]
+        if stale_repo_ids:
+            await session.execute(
+                update(Repository)
+                .where(Repository.id.in_(stale_repo_ids))
+                .values(status="failed")
+            )
+            print(f"Recovered {len(stale_repo_ids)} stale ingestion job(s) on startup.")
+        await session.commit()
 
 
 @app.on_event("shutdown")

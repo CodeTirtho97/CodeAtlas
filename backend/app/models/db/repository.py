@@ -20,6 +20,9 @@ class Repository(BaseModel):
     api_endpoints_json = Column(JSON, nullable=True)  # [{method, path, file_path, function_name}]
     dependency_json = Column(JSON, nullable=True)  # {file: {uses: [], used_by: []}}
 
+    # Incremental re-indexing: SHA of the commit that was last fully indexed
+    indexed_commit_sha = Column(String, nullable=True)
+
     # Cached eval result
     eval_report_json = Column(JSON, nullable=True)  # full EvalReport stored after run
     eval_ran_at = Column(DateTime, nullable=True)

@@ -1,12 +1,14 @@
+import json as _json
+
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
 from uuid import UUID
 from datetime import datetime, timezone
-from qdrant_client import AsyncQdrantClient
 
-from app.core.database import get_session
+from app.core.database import get_session, AsyncSessionLocal
 from app.core.qdrant import get_qdrant_client
 from app.models.db import ChatSession, ChatMessage, Repository, User
 from app.models.schemas import (
@@ -17,7 +19,7 @@ from app.models.schemas import (
     ChatAskResponse,
 )
 from app.api.routes.auth import get_current_user_dependency
-from app.services.generation.qa import answer_with_history
+from app.services.generation.qa import answer_with_history, stream_answer_with_history
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -271,4 +273,154 @@ async def ask_question(
         }),
         questions_today=new_daily_count,
         questions_in_session=new_session_msg_count,
+    )
+
+
+@router.post("/sessions/{session_id}/stream")
+async def ask_question_stream(
+    session_id: UUID,
+    req: ChatAskRequest,
+    current_user: User = Depends(get_current_user_dependency),
+    db_session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """Stream a chat answer as Server-Sent Events with rate limiting and session persistence.
+
+    SSE protocol:
+      data: {"type": "sources", "sources": [...]}                    — retrieval results (instant)
+      data: {"type": "token",   "content": "..."}                    — answer text chunks
+      data: {"type": "done",    "user_message_id": "...",
+             "message_id": "...", "questions_today": N,
+             "questions_in_session": N}                              — terminal event
+    """
+    question = req.question.strip()
+    if len(question) < 10 or len(question) > 1000:
+        raise HTTPException(status_code=400, detail="Question must be 10-1000 characters")
+
+    session_result = await db_session.execute(
+        select(ChatSession).where(
+            (ChatSession.id == session_id) & (ChatSession.user_id == current_user.id)
+        )
+    )
+    chat_session = session_result.scalar_one_or_none()
+    if not chat_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    repo_result = await db_session.execute(
+        select(Repository).where(Repository.id == chat_session.repository_id)
+    )
+    repo = repo_result.scalar_one_or_none()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    # Rate limiting — same thresholds as /ask
+    session_msg_count = await db_session.scalar(
+        select(func.count()).select_from(ChatMessage)
+        .where((ChatMessage.session_id == session_id) & (ChatMessage.role == "user"))
+    ) or 0
+    if session_msg_count >= 15:
+        raise HTTPException(status_code=429, detail="Session limit reached (15/15)")
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_msg_count = await db_session.scalar(
+        select(func.count()).select_from(ChatMessage)
+        .join(ChatSession)
+        .where(
+            (ChatMessage.role == "user")
+            & (ChatSession.user_id == current_user.id)
+            & (ChatMessage.created_at >= today_start)
+        )
+    ) or 0
+    if daily_msg_count >= 30:
+        raise HTTPException(status_code=429, detail="Daily limit reached (30/day)")
+
+    # Conversation history
+    prev_result = await db_session.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(10)
+    )
+    history = [{"role": m.role, "content": m.content} for m in reversed(prev_result.scalars().all())]
+
+    # Save user message before stream starts so it persists even on client disconnect
+    user_msg = ChatMessage(session_id=session_id, role="user", content=question, sources_json=None)
+    db_session.add(user_msg)
+
+    if session_msg_count == 0:
+        chat_session.title = question[:57] + "…" if len(question) > 57 else question
+    chat_session.message_count += 1
+    chat_session.updated_at = datetime.utcnow()
+
+    await db_session.commit()
+    await db_session.refresh(user_msg)
+
+    # Snapshot values for generator closure (db_session closes when response starts)
+    user_message_id = str(user_msg.id)
+    repo_id = str(chat_session.repository_id)
+    repo_name = repo.name
+    questions_today = daily_msg_count + 1
+    questions_in_session = session_msg_count + 1
+    qdrant_client = await get_qdrant_client()
+
+    async def generate():
+        accumulated_text: list = []
+        accumulated_sources: list = []
+
+        async for event_str in stream_answer_with_history(
+            client=qdrant_client,
+            question=question,
+            repository_id=repo_id,
+            repo_name=repo_name,
+            history=history,
+        ):
+            # Strip the 'data: ' prefix to parse, re-yield everything except the bare 'done'
+            raw = event_str
+            if raw.startswith("data: "):
+                raw = raw[6:]
+            raw = raw.strip()
+
+            try:
+                payload = _json.loads(raw)
+            except Exception:
+                yield event_str
+                continue
+
+            evt_type = payload.get("type")
+            if evt_type == "token":
+                accumulated_text.append(payload.get("content", ""))
+                yield event_str
+            elif evt_type == "sources":
+                accumulated_sources = payload.get("sources", [])
+                yield event_str
+            elif evt_type == "done":
+                # Save assistant message, then emit the richer done event
+                full_answer = "".join(accumulated_text)
+                async with AsyncSessionLocal() as save_session:
+                    assistant_msg = ChatMessage(
+                        session_id=session_id,
+                        role="assistant",
+                        content=full_answer,
+                        sources_json=accumulated_sources,
+                    )
+                    save_session.add(assistant_msg)
+                    await save_session.commit()
+                    await save_session.refresh(assistant_msg)
+
+                done_event = {
+                    "type": "done",
+                    "user_message_id": user_message_id,
+                    "message_id": str(assistant_msg.id),
+                    "questions_today": questions_today,
+                    "questions_in_session": questions_in_session,
+                }
+                yield f"data: {_json.dumps(done_event)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )

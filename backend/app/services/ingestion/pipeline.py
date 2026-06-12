@@ -20,7 +20,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -36,6 +36,8 @@ from app.services.ingestion.embedder import embed_chunks
 from app.services.ingestion.store import (
     store_in_qdrant,
     store_in_postgres,
+    delete_files_from_qdrant,
+    delete_files_from_postgres,
 )
 from app.services.analysis.dependency_graph import build_dependency_graph
 from app.services.analysis.api_extractor import extract_endpoints
@@ -118,6 +120,37 @@ async def _check_cancelled(session: AsyncSession, job_id: str) -> None:
         raise PipelineCancelledError()
 
 
+def _get_head_sha(clone_dir: Path) -> Optional[str]:
+    """Return the HEAD commit SHA of the cloned repository."""
+    try:
+        from git import Repo as GitRepo
+        return GitRepo(str(clone_dir)).head.commit.hexsha
+    except Exception:
+        return None
+
+
+def _get_changed_files(clone_dir: Path, old_sha: str) -> Optional[Set[str]]:
+    """Return the set of relative file paths changed between old_sha and HEAD.
+
+    Returns None if the diff cannot be computed (e.g. old_sha no longer in history).
+    """
+    try:
+        from git import Repo as GitRepo
+        repo = GitRepo(str(clone_dir))
+        old_commit = repo.commit(old_sha)
+        diff = old_commit.diff(repo.head.commit)
+        changed: Set[str] = set()
+        for item in diff:
+            if item.a_path:
+                changed.add(item.a_path)
+            if item.b_path:
+                changed.add(item.b_path)
+        return changed
+    except Exception as exc:
+        log.warning("Could not compute git diff from %s: %s — falling back to full re-index", old_sha, exc)
+        return None
+
+
 async def _run_pipeline(
     session: AsyncSession,
     job_id: str,
@@ -129,13 +162,55 @@ async def _run_pipeline(
     await _update_job(session, job_id, pct=5, msg="Cloning repository...")
     clone_dir = await asyncio.to_thread(clone_repo, github_url, job_id)
 
+    # ── Determine incremental vs full re-index ───────────────────────────────
+    head_sha = await asyncio.to_thread(_get_head_sha, clone_dir)
+    repo_record = (await session.execute(
+        select(Repository).where(Repository.id == repository_id)
+    )).scalar_one_or_none()
+
+    old_sha = repo_record.indexed_commit_sha if repo_record else None
+    incremental = False
+    changed_relative_paths: Optional[Set[str]] = None
+
+    if old_sha and head_sha and old_sha != head_sha:
+        changed_relative_paths = await asyncio.to_thread(
+            _get_changed_files, clone_dir, old_sha
+        )
+        if changed_relative_paths is not None:
+            incremental = True
+            log.info(
+                "Job %s: incremental re-index — %d file(s) changed since %s",
+                job_id, len(changed_relative_paths), old_sha[:8],
+            )
+
     # ── Step 2: Filter files ─────────────────────────────────────────────────
     await _check_cancelled(session, job_id)
-    await _update_job(session, job_id, pct=15, msg="Filtering files...")
-    files = await asyncio.to_thread(get_filtered_files, clone_dir)
+    mode_label = "changed files" if incremental else "files"
+    await _update_job(session, job_id, pct=15, msg=f"Filtering {mode_label}...")
+    all_files = await asyncio.to_thread(get_filtered_files, clone_dir)
 
-    if not files:
+    if not all_files:
         raise ValueError("No indexable code files found. The repository may be empty, documentation-only, or use unsupported languages.")
+
+    # In incremental mode, restrict to files that changed
+    if incremental and changed_relative_paths is not None:
+        files = [f for f in all_files if f.relative_path in changed_relative_paths]
+        if not files:
+            log.info("Job %s: no indexable files changed — skipping embed step", job_id)
+            await _finalize(
+                session,
+                job_id=job_id,
+                repository_id=repository_id,
+                chunk_count=repo_record.chunk_count or 0,
+                summary_json=repo_record.summary_json,
+                onboarding_json=repo_record.onboarding_json,
+                endpoints_json=repo_record.api_endpoints_json,
+                dep_json=repo_record.dependency_json,
+                new_commit_sha=head_sha,
+            )
+            return clone_dir
+    else:
+        files = all_files
 
     log.info("Job %s: found %d files to index in %s", job_id, len(files), github_url)
 
@@ -154,14 +229,47 @@ async def _run_pipeline(
     await _update_job(session, job_id, pct=50, msg="Generating embeddings...")
     chunks_with_embeddings = await asyncio.to_thread(embed_chunks, chunks)
 
+    embedded_count = len(chunks_with_embeddings)
+    total_count = len(chunks)
+    if embedded_count < total_count:
+        skipped = total_count - embedded_count
+        log.warning(
+            "Job %s: %d/%d chunks failed to embed and were skipped",
+            job_id, skipped, total_count,
+        )
+
     # ── Step 5: Store vectors + DB records ───────────────────────────────────
     await _check_cancelled(session, job_id)
-    await _update_job(session, job_id, pct=75, msg="Storing vectors...")
+    store_msg = (
+        f"Storing vectors... ({embedded_count:,}/{total_count:,} chunks indexed)"
+        if embedded_count < total_count
+        else "Storing vectors..."
+    )
+    await _update_job(session, job_id, pct=75, msg=store_msg)
     qdrant_client = await get_qdrant_client()
+
+    # In incremental mode, delete stale vectors/records for changed files first
+    if incremental:
+        changed_paths = [f.relative_path for f in files]
+        await delete_files_from_qdrant(qdrant_client, repository_id, changed_paths)
+        await delete_files_from_postgres(session, repository_id, changed_paths)
+
     point_id_map = await store_in_qdrant(
         qdrant_client, chunks_with_embeddings, repository_id
     )
     await store_in_postgres(session, chunks, files, repository_id, point_id_map)
+
+    # For incremental, total chunk count = old total - deleted + new embedded
+    if incremental and repo_record:
+        from sqlalchemy import func as sql_func
+        from app.models.db.chunk import Chunk as ChunkModel
+        total_embedded = await session.scalar(
+            select(sql_func.count(ChunkModel.id)).where(
+                ChunkModel.repository_id == repository_id
+            )
+        ) or embedded_count
+    else:
+        total_embedded = embedded_count
 
     # ── Step 6: Dependency graph ─────────────────────────────────────────────
     await _check_cancelled(session, job_id)
@@ -192,17 +300,19 @@ async def _run_pipeline(
         session,
         job_id=job_id,
         repository_id=repository_id,
-        chunk_count=len(chunks),
+        chunk_count=total_embedded,
         summary_json=summary_json,
         onboarding_json=onboarding_json,
         endpoints_json=endpoints_json,
         dep_json=dep_json,
+        new_commit_sha=head_sha,
     )
 
     log.info(
-        "Job %s completed: %d chunks, %d endpoints, %d dep edges",
+        "Job %s completed (%s): %d chunks indexed, %d endpoints, %d dep edges",
         job_id,
-        len(chunks),
+        "incremental" if incremental else "full",
+        total_embedded,
         len(endpoints_json),
         len(dep_json),
     )
@@ -271,9 +381,9 @@ async def _finalize(
     onboarding_json: dict,
     endpoints_json: list,
     dep_json: dict,
+    new_commit_sha: Optional[str] = None,
 ) -> None:
     """Update repository with generated content and mark job as completed."""
-    # Update repository record
     repo_result = await session.execute(
         select(Repository).where(Repository.id == repository_id)
     )
@@ -285,6 +395,8 @@ async def _finalize(
         repo.onboarding_json = onboarding_json
         repo.api_endpoints_json = endpoints_json
         repo.dependency_json = dep_json
+        if new_commit_sha:
+            repo.indexed_commit_sha = new_commit_sha
 
     # Mark job completed
     await _update_job(

@@ -1,4 +1,4 @@
-"""Embedding service using Google text-embedding-004 via direct REST API.
+"""Embedding service using gemini-embedding-001 via direct REST API.
 
 Bypasses the google-genai SDK's model resolution logic (which constructs
 incorrect URLs for embed_content in v2.x) and calls the Gemini REST
@@ -6,7 +6,7 @@ endpoint directly via httpx.
 
 API reference:
   POST https://generativelanguage.googleapis.com/v1beta/models/
-       text-embedding-004:batchEmbedContents?key=API_KEY
+       gemini-embedding-001:batchEmbedContents
 """
 import logging
 import random
@@ -44,7 +44,11 @@ def embed_chunks(chunks: List[Chunk]) -> List[Tuple[Chunk, List[float]]]:
 
     Raises RuntimeError if every batch fails (no embeddings produced at all),
     so callers get the actual failure reason rather than a silent empty list.
+    Returns an empty list immediately for empty input.
     """
+    if not chunks:
+        return []
+
     results: List[Tuple[Chunk, List[float]]] = []
     batches = [chunks[i: i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
     last_error: Optional[str] = None

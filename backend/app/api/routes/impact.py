@@ -7,6 +7,8 @@ from sqlalchemy.future import select
 
 from app.api.routes.auth import get_current_user_dependency
 from app.core.database import get_session
+from app.models.db.chunk import Chunk as ChunkModel
+from app.models.db.file import File as FileModel
 from app.models.db.repository import Repository
 from app.models.db.user import User
 from app.services.analysis.impact import analyze_impact
@@ -65,11 +67,29 @@ async def get_impact(
     if not repo.dependency_json:
         raise HTTPException(status_code=400, detail="Dependency graph not available for this repository")
 
+    # Build function/class-name → file-path index from indexed chunks so that
+    # arbitrary function names (not just API endpoints) resolve to the right file.
+    chunk_rows = await session.execute(
+        select(ChunkModel.function_name, ChunkModel.class_name, FileModel.path)
+        .join(FileModel, ChunkModel.file_id == FileModel.id)
+        .where(ChunkModel.repository_id == repo_id)
+        .where(
+            (ChunkModel.function_name.isnot(None)) | (ChunkModel.class_name.isnot(None))
+        )
+    )
+    chunk_fn_index: Dict[str, str] = {}
+    for fn_name, cls_name, file_path in chunk_rows.all():
+        if fn_name and fn_name.lower() not in chunk_fn_index:
+            chunk_fn_index[fn_name.lower()] = file_path
+        if cls_name and cls_name.lower() not in chunk_fn_index:
+            chunk_fn_index[cls_name.lower()] = file_path
+
     impact = await analyze_impact(
         symbol=req.symbol.strip(),
         dependency_json=repo.dependency_json or {},
         api_endpoints_json=repo.api_endpoints_json or [],
         repo_name=repo.name,
+        chunk_fn_index=chunk_fn_index,
     )
 
     return ImpactResponse(

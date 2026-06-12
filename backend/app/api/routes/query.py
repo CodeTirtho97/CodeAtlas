@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -12,7 +13,7 @@ from app.models.db.repository import Repository
 from app.models.db.user import User
 from app.models.schemas import QueryRequest, QueryResponse, SourceCitation
 from app.api.routes.auth import get_current_user_dependency
-from app.services.generation.qa import answer_question
+from app.services.generation.qa import answer_question, stream_answer_question
 
 router = APIRouter(prefix="/query", tags=["queries"])
 
@@ -73,6 +74,50 @@ async def submit_query(
         answer=result["answer"],
         sources=sources,
         created_at=question_record.created_at or datetime.utcnow(),
+    )
+
+
+@router.post("/stream")
+async def submit_query_stream(
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user_dependency),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """Stream a natural language answer as Server-Sent Events.
+
+    Events (each is `data: <json>\\n\\n`):
+      {"type": "sources", "sources": [...]}   — emitted first; retrieve metadata
+      {"type": "token",   "content": "..."}   — streamed answer text chunks
+      {"type": "done"}                        — terminal event
+
+    The client should consume the event stream until it receives "done".
+    """
+    question = request.question.strip()
+    if len(question) < 10:
+        raise HTTPException(status_code=400, detail="Question too short (min 10 chars).")
+    if len(question) > 1000:
+        raise HTTPException(status_code=400, detail="Question too long (max 1000 chars).")
+
+    repo = await _get_indexed_repo(session, str(request.repository_id), current_user.id)
+    qdrant_client = await get_qdrant_client()
+
+    async def event_generator():
+        async for event in stream_answer_question(
+            client=qdrant_client,
+            question=question,
+            repository_id=str(repo.id),
+            repo_name=repo.name,
+        ):
+            yield event
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # disable Nginx buffering
+            "Connection": "keep-alive",
+        },
     )
 
 

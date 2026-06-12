@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "backend/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "backend/**"
+      - ".github/workflows/ci.yml"
+
+jobs:
+  test:
+    name: Unit tests + lint + types
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # Dummy values satisfy Settings.validate_required_fields(); no real services
+    # are contacted during unit tests (all external calls are mocked).
+    env:
+      DATABASE_URL: postgresql+asyncpg://user:pass@localhost:5432/testdb
+      QDRANT_URL: http://localhost:6333
+      QDRANT_API_KEY: ""
+      GOOGLE_API_KEY: ci_dummy_key
+      GITHUB_CLIENT_ID: ci_dummy_client_id
+      GITHUB_CLIENT_SECRET: ci_dummy_client_secret
+      JWT_SECRET: ci_dummy_jwt_secret_at_least_32_characters_long
+      FRONTEND_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Format check (black)
+        run: black --check app/ tests/
+
+      - name: Unit tests
+        run: pytest tests/unit/ -v --cov=app --cov-report=term-missing
+
+      - name: Type check (mypy)
+        # Non-blocking: report type errors but don't fail the build until
+        # the codebase is fully annotated.
+        continue-on-error: true
+        run: mypy app

@@ -92,6 +92,59 @@ async def delete_from_qdrant(client: AsyncQdrantClient, repository_id: str) -> N
     log.info("Deleted Qdrant vectors for repository %s", repository_id)
 
 
+async def delete_files_from_qdrant(
+    client: AsyncQdrantClient,
+    repository_id: str,
+    file_paths: List[str],
+) -> None:
+    """Remove Qdrant vectors for specific files within a repository.
+
+    Used during incremental re-indexing to delete stale points before
+    upserting freshly embedded replacements.
+    """
+    from qdrant_client.models import FilterSelector
+    for file_path in file_paths:
+        await client.delete(
+            collection_name=COLLECTION,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="repository_id",
+                            match=MatchValue(value=str(repository_id)),
+                        ),
+                        FieldCondition(
+                            key="file_path",
+                            match=MatchValue(value=file_path),
+                        ),
+                    ]
+                )
+            ),
+            wait=True,
+        )
+    log.info(
+        "Deleted Qdrant vectors for %d file(s) in repository %s",
+        len(file_paths), repository_id,
+    )
+
+
+async def delete_files_from_postgres(
+    session: AsyncSession,
+    repository_id: str,
+    file_paths: List[str],
+) -> None:
+    """Delete File (and cascade-delete Chunk) records for specific file paths."""
+    from sqlalchemy import delete as sql_delete
+    from app.models.db.file import File
+    await session.execute(
+        sql_delete(File).where(
+            (File.repository_id == repository_id) &
+            (File.path.in_(file_paths))
+        )
+    )
+    await session.flush()
+
+
 # ─── PostgreSQL ──────────────────────────────────────────────────────────────
 
 async def store_in_postgres(

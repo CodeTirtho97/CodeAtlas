@@ -2,6 +2,8 @@
 
 > **New codebase? Own it in minutes.**
 
+**Live demo:** https://code-atlas-five.vercel.app/ &nbsp;|&nbsp; **API docs:** https://codeatlas-tg4h.onrender.com/api/docs
+
 <img width="1578" height="787" alt="image" src="https://github.com/user-attachments/assets/a533bd9f-6076-41dd-b3a4-6311aa398c77" />
 
 
