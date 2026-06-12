@@ -1,321 +1,265 @@
-# Backend Development Guide
+# Backend — Developer Guide
 
 ## Setup
 
 ### Prerequisites
 - Python 3.11+
-- pip or poetry
-- PostgreSQL (via Docker)
-- Qdrant (via Docker)
+- [uv](https://docs.astral.sh/uv/) (fast Python package manager)
+- PostgreSQL and Qdrant running (Docker Compose recommended)
 
-### Installation
+### Install dependencies
 
 ```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+cd backend
+uv sync                # install from uv.lock
+uv sync --extra dev    # also install pytest, black, mypy
 ```
 
-## Running Locally
+### Environment variables
 
-### With Docker Compose
 ```bash
-docker-compose up backend
+cp .env.example .env   # then fill in values
 ```
 
-### Without Docker (using external DB)
-```bash
-# Set environment variables
-export DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/codeatlas
-export QDRANT_URL=http://localhost:6333
-export GOOGLE_API_KEY=...
-export GITHUB_CLIENT_ID=...
-export GITHUB_CLIENT_SECRET=...
-export JWT_SECRET=dev_secret_key
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://user:pass@localhost:5432/codeatlas` |
+| `QDRANT_URL` | `http://localhost:6333` |
+| `GOOGLE_API_KEY` | Google AI Studio key — used for embeddings (`gemini-embedding-001`) and Gemini LLM |
+| `GROQ_API_KEY` | Groq Cloud key — primary LLM for Q&A and reranking; Gemini is fallback when this is set |
+| `GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth app secret |
+| `JWT_SECRET` | Random secret ≥ 32 chars |
+| `FRONTEND_URL` | `http://localhost:3000` (dev) |
 
-# Run server
+Optional: `QDRANT_API_KEY` (Qdrant Cloud only), `LOG_LEVEL` (default: `INFO`).
+
+**LLM provider precedence:** if `GROQ_API_KEY` is set, Groq (`llama-3.3-70b-versatile`) is used for Q&A generation and reranking. On Groq 429 / any error, the backend automatically falls back to Gemini 2.0 Flash and emits a `provider_switch` SSE event so the frontend can notify the user. When Gemini quota is exhausted first, Groq is the fallback in the same way.
+
+---
+
+## Running locally
+
+### With Docker Compose (recommended)
+
+```bash
+docker-compose up
+```
+
+Starts PostgreSQL, Qdrant, and the backend with hot-reload.
+
+### Without Docker
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-## Project Structure
+API docs available at `http://localhost:8000/api/docs`.
+
+---
+
+## Project structure
 
 ```
 backend/
 ├── app/
-│   ├── main.py                    # FastAPI app entry point
-│   ├── api/
-│   │   └── routes/
-│   │       ├── auth.py            # Authentication (GitHub OAuth)
-│   │       ├── repos.py           # Repository management
-│   │       └── query.py           # Q&A queries
+│   ├── main.py                        # FastAPI init, CORS, router registration
+│   ├── api/routes/
+│   │   ├── auth.py                    # GitHub OAuth login + callback, /auth/me
+│   │   ├── repos.py                   # ingest, list, get, delete repos
+│   │   ├── query.py                   # one-shot Q&A + POST /query/stream (SSE)
+│   │   ├── chat.py                    # sessions, messages, /ask, /stream (SSE)
+│   │   ├── impact.py                  # change-impact analysis
+│   │   └── eval.py                    # RAG quality evaluation
 │   ├── core/
-│   │   ├── config.py              # Pydantic settings
-│   │   ├── database.py            # SQLAlchemy async engine
-│   │   └── qdrant.py              # Qdrant async client
+│   │   ├── config.py                  # pydantic-settings, env-var validation on startup
+│   │   ├── database.py                # SQLAlchemy async engine, get_session, AsyncSessionLocal
+│   │   └── qdrant.py                  # Qdrant async client singleton
 │   ├── models/
-│   │   ├── db/                    # SQLAlchemy ORM models
-│   │   │   ├── base.py            # Base model
+│   │   ├── db/                        # SQLAlchemy ORM models
+│   │   │   ├── base.py                # UUID PK + created_at / updated_at
 │   │   │   ├── user.py
 │   │   │   ├── repository.py
 │   │   │   ├── file.py
 │   │   │   ├── chunk.py
+│   │   │   ├── ingestion_job.py
 │   │   │   ├── question.py
-│   │   │   └── ingestion_job.py
-│   │   └── schemas/               # Pydantic request/response schemas
+│   │   │   ├── chat_session.py
+│   │   │   └── chat_message.py
+│   │   └── schemas/                   # Pydantic request/response schemas
 │   │       ├── auth.py
 │   │       ├── repository.py
-│   │       └── query.py
-│   └── services/                  # Business logic (Phase 2+)
+│   │       ├── query.py
+│   │       └── chat.py
+│   └── services/
 │       ├── ingestion/
+│       │   ├── pipeline.py            # orchestrator called by BackgroundTasks
+│       │   ├── cloner.py              # GitPython shallow clone + size guard
+│       │   ├── file_filter.py         # skip list, language detection
+│       │   ├── parser.py              # dispatches to per-language parsers
+│       │   ├── parsers/
+│       │   │   ├── python_parser.py
+│       │   │   ├── js_parser.py       # .js + .jsx
+│       │   │   ├── ts_parser.py       # .ts + .tsx
+│       │   │   ├── java_parser.py
+│       │   │   ├── go_parser.py
+│       │   │   └── fallback_parser.py # 100-line raw chunking for Tier 2
+│       │   ├── embedder.py            # gemini-embedding-001, batched
+│       │   ├── chunk.py               # Chunk dataclass
+│       │   └── store.py               # Qdrant upsert + PostgreSQL insert
 │       ├── search/
+│       │   ├── retriever.py           # hybrid search: dense + BM25 + RRF, rerank param
+│       │   ├── rerank.py              # LLM reranker: Groq first, Gemini fallback (5s timeout → RRF)
+│       │   └── sparse.py              # BM25 sparse encoder helpers
 │       ├── generation/
-│       └── analysis/
-├── alembic/                       # Database migrations (Phase 2+)
-├── tests/                         # Test suite
-├── requirements.txt
-├── .env
+│       │   ├── qa.py                  # Gemini 2.0 Flash primary → Groq fallback on quota/error
+│       │   │                          # stream_answer_with_history(): SSE async generator
+│       │   │                          # emits provider_switch event when provider changes
+│       │   ├── summarizer.py          # repo summary (one Gemini call at ingestion)
+│       │   └── onboarding.py          # onboarding guide (one Gemini call at ingestion)
+│       ├── analysis/
+│       │   ├── api_extractor.py       # Tree-sitter route/decorator extraction
+│       │   ├── dependency_graph.py    # NetworkX import graph → adjacency JSON
+│       │   └── impact.py              # change-impact: transitive dep walk + risk scoring
+│       └── evaluation/
+│           └── retrieval_eval.py      # Recall@5, MRR, ablation (HYBRID/DENSE/SPARSE), citation precision
+├── tests/
+│   └── unit/                          # pytest unit tests (no external services)
+├── alembic/                           # DB migrations
+├── pyproject.toml                     # dependencies managed with uv
+├── uv.lock
 ├── .env.example
 ├── Dockerfile
-└── README.md
+└── .github/workflows/ci.yml          # black check + pytest unit + mypy
 ```
-
-## Code Style
-
-### Python
-- **Formatter:** Black
-- **Linter:** Pylint
-- **Type checker:** MyPy
-- **Line length:** 100 characters
-
-```bash
-# Format code
-black app
-
-# Run linter
-pylint app
-
-# Type check
-mypy app
-```
-
-### Naming Conventions
-- Files: `snake_case.py`
-- Classes: `PascalCase`
-- Functions: `snake_case`
-- Constants: `UPPER_SNAKE_CASE`
-
-## Testing
-
-### Unit Tests
-```bash
-pytest tests/unit -v
-```
-
-### Integration Tests
-```bash
-pytest tests/integration -v
-```
-
-### All Tests with Coverage
-```bash
-pytest --cov=app tests/
-```
-
-### Test Structure
-```
-tests/
-├── unit/
-│   ├── test_auth.py
-│   ├── test_repos.py
-│   └── test_models.py
-└── integration/
-    ├── test_auth_flow.py
-    ├── test_ingestion_pipeline.py
-    └── test_query_pipeline.py
-```
-
-## Database
-
-### Models
-All SQLAlchemy models are in `app/models/db/`. Base model provides:
-- `id` (UUID primary key)
-- `created_at` (datetime)
-- `updated_at` (datetime)
-
-### Migrations (Phase 2+)
-Alembic migrations track schema changes:
-
-```bash
-# Auto-generate migration
-alembic revision --autogenerate -m "Add new column"
-
-# Apply migrations
-alembic upgrade head
-
-# Rollback
-alembic downgrade -1
-```
-
-### Running Migrations
-```bash
-# Up
-python -m alembic upgrade head
-
-# Down
-python -m alembic downgrade -1
-```
-
-## API Documentation
-
-Auto-generated from FastAPI docstrings:
-- **Swagger UI:** http://localhost:8000/api/docs
-- **ReDoc:** http://localhost:8000/api/redoc
-
-### Endpoint Template
-```python
-@router.post("/path", response_model=ResponseSchema, status_code=200)
-async def endpoint_name(
-    request: RequestSchema,
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user_dependency),
-) -> ResponseSchema:
-    """One-line description.
-    
-    More detailed explanation if needed.
-    """
-    # Implementation
-    pass
-```
-
-## Authentication
-
-### JWT Token
-- **Algorithm:** HS256
-- **Expiry:** 7 days
-- **Secret:** `JWT_SECRET` env var
-
-### Token Payload
-```python
-{
-    "user_id": "uuid",
-    "github_username": "string",
-    "iat": timestamp,
-    "exp": timestamp
-}
-```
-
-## External APIs
-
-### Google AI (Gemini + Embeddings)
-- **Key:** `GOOGLE_API_KEY` env var
-- **Endpoint:** https://generativelanguage.googleapis.com/
-- **Libraries:** `google-generativeai`
-
-### GitHub OAuth
-- **Endpoints:** 
-  - Authorization: https://github.com/login/oauth/authorize
-  - Token: https://github.com/login/oauth/access_token
-  - User: https://api.github.com/user
-- **Library:** `httpx` (async HTTP client)
-
-## Adding a New API Endpoint
-
-1. Create route file in `app/api/routes/`
-2. Define Pydantic schemas in `app/models/schemas/`
-3. Implement handler with proper error handling
-4. Register router in `app/main.py`
-
-Example:
-```python
-# app/api/routes/example.py
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.database import get_session
-
-router = APIRouter(prefix="/example", tags=["example"])
-
-@router.get("")
-async def list_examples(session: AsyncSession = Depends(get_session)):
-    """List all examples."""
-    return {"items": []}
-
-# app/main.py
-from app.api.routes import example
-app.include_router(example.router)
-```
-
-## Adding a New Service
-
-Services go in `app/services/` and encapsulate business logic:
-
-```python
-# app/services/ingestion/pipeline.py
-class IngestionPipeline:
-    async def run(self, job_id: str, github_url: str) -> None:
-        # Orchestrate ingestion steps
-        pass
-```
-
-## Environment Variables
-
-Required vars (validated on startup):
-- `DATABASE_URL`
-- `QDRANT_URL`
-- `GOOGLE_API_KEY`
-- `GITHUB_CLIENT_ID`
-- `GITHUB_CLIENT_SECRET`
-- `JWT_SECRET`
-- `FRONTEND_URL`
-
-Optional:
-- `LOG_LEVEL` (default: INFO)
-- `QDRANT_API_KEY` (for cloud Qdrant)
-
-## Debugging
-
-### Enable verbose logging
-```python
-# app/core/config.py
-LOG_LEVEL = "DEBUG"
-```
-
-### FastAPI debug mode
-```python
-# app/main.py
-app = FastAPI(debug=True)
-```
-
-### Inspect database queries
-```python
-# app/core/database.py
-engine = create_async_engine(..., echo=True)  # SQL logging
-```
-
-## Performance Tips
-
-- Use async/await (always)
-- Batch API calls (embeddings, etc.)
-- Index frequently-queried columns
-- Use connection pooling
-- Cache frequently-accessed data
-
-## Phase 2 TODOs
-
-- [ ] Implement `services/ingestion/` pipeline
-- [ ] Add Alembic migrations
-- [ ] Implement hybrid search in Qdrant
-- [ ] Add comprehensive test suite
-- [ ] Implement caching layer
-- [ ] Add monitoring/logging
 
 ---
 
-See `Project_Spec.md` for requirements and `../README.md` for project overview.
+## API routes
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/auth/login` | Redirect to GitHub OAuth |
+| `GET` | `/auth/callback` | Exchange code, set JWT cookie |
+| `GET` | `/auth/me` | Current user info |
+| `POST` | `/repos/ingest` | Submit repo for ingestion |
+| `GET` | `/repos/ingest/{job_id}/status` | Poll ingestion progress |
+| `GET` | `/repos` | List user's repos |
+| `GET` | `/repos/{repo_id}` | Repo detail (summary, onboarding, endpoints, deps) |
+| `DELETE` | `/repos/{repo_id}` | Delete repo from Qdrant + DB |
+| `POST` | `/query` | One-shot Q&A with citations |
+| `POST` | `/query/stream` | Streaming Q&A (SSE) |
+| `GET` | `/chat/sessions` | List chat sessions for a repo |
+| `POST` | `/chat/sessions` | Create chat session |
+| `DELETE` | `/chat/sessions/{id}` | Delete session |
+| `GET` | `/chat/sessions/{id}/messages` | Get session messages |
+| `POST` | `/chat/sessions/{id}/ask` | Ask in session (blocking) |
+| `POST` | `/chat/sessions/{id}/stream` | Ask in session (SSE streaming) |
+| `POST` | `/impact` | Change-impact analysis for a symbol/function |
+| `POST` | `/eval/run` | Run RAG evaluation |
+| `GET` | `/eval/result/{repo_id}` | Get cached eval report |
+| `GET` | `/health` | Service health check |
+
+---
+
+## SSE streaming protocol
+
+`POST /query/stream` and `POST /chat/sessions/{id}/stream` both emit Server-Sent Events:
+
+```
+data: {"type": "sources",         "sources": [...]}
+      ↑ instant — retrieval results before generation starts
+
+data: {"type": "token",           "content": "..."}
+      ↑ one per streamed text chunk; answer may contain inline [N] citation markers
+
+data: {"type": "provider_switch", "provider": "groq",   "message": "Gemini quota reached — switched to Groq automatically"}
+      ↑ emitted ONLY when the LLM provider changes mid-session (optional event)
+
+data: {"type": "generation_error","message": "..."}
+      ↑ forwarded as a token to the client; prevents saving an empty message
+
+data: {"type": "done",            "provider": "gemini",
+       "message_id": "...",       "user_message_id": "...",
+       "questions_today": N,      "questions_in_session": N}
+      ↑ terminal event; "provider" tells frontend which LLM ultimately answered
+```
+
+**Inline citations:** the LLM is prompted to place `[N]` markers (1-based chunk index) right after phrases that directly reference a specific function or class. The frontend strips these markers from visible text, using them only to underline the cited phrase and link it to the Evidence panel.
+
+The request session is closed when `StreamingResponse` is returned; the assistant message is persisted inside the generator using a fresh `AsyncSessionLocal()` context.
+
+---
+
+## Retrieval pipeline
+
+```
+Query
+  → embed with gemini-embedding-001 (RETRIEVAL_QUERY task type)
+  → Qdrant prefetch: dense top-20 + BM25 sparse top-20
+  → RRF fusion → top-10
+  → LLM reranker:
+      if GROQ_API_KEY set → Groq llama-3.3-70b-versatile (scores 0-10)
+                           → on failure, falls back to Gemini
+      else                → Gemini 2.0 Flash (scores 0-10)
+      5s timeout on either → falls back to RRF order
+  → top-10 final chunks passed to generation layer
+
+Generation layer:
+  if GROQ_API_KEY set → Gemini 2.0 Flash primary
+                       → on 429 / error → emit provider_switch SSE → Groq fallback
+  else               → Gemini 2.0 Flash only
+```
+
+Reranking is only applied for `SearchMode.HYBRID` when `rerank=True` is passed to `search()`.
+
+---
+
+## Chat rate limits
+
+Enforced in both `/ask` and `/stream` before any response is sent:
+
+- **15 questions per session**
+- **30 questions per user per day** (resets at UTC midnight)
+
+---
+
+## Testing
+
+```bash
+# Unit tests (no external services needed)
+uv run pytest tests/unit/ -v
+
+# With coverage report
+uv run pytest tests/unit/ --cov=app --cov-report=term-missing
+
+# Format check
+uv run black --check app
+
+# Type check
+uv run mypy app
+```
+
+CI runs all three on every push/PR via `.github/workflows/ci.yml`.
+
+---
+
+## Code style
+
+- **Formatter:** Black (line-length 100)
+- **Type checker:** MyPy (`ignore_missing_imports = true`)
+- **Async:** async/await throughout — SQLAlchemy 2.x async ORM, asyncpg driver
+- **Naming:** `snake_case` functions/vars, `PascalCase` classes, `UPPER_SNAKE_CASE` constants
+
+---
+
+## Adding a new route
+
+1. Create `app/api/routes/new_feature.py`
+2. Define Pydantic schemas in `app/models/schemas/`
+3. Register the router in `app/main.py`
+4. Add unit tests in `tests/unit/`
+
+---
+
+See `Project_Spec.md` for full requirements and architecture details.

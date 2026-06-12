@@ -7,7 +7,6 @@ import { DashboardSkeleton } from '../components/dashboard/shared'
 import { PAGE_META, TAB_COLORS, ALL_ITEMS, type TabId } from '../components/dashboard/nav'
 import Sidebar from '../components/dashboard/Sidebar'
 import MobileNav from '../components/dashboard/MobileNav'
-import OverviewPanel from '../components/dashboard/OverviewPanel'
 import UnderstandPanel from '../components/dashboard/UnderstandPanel'
 import ExplorePanel from '../components/dashboard/ExplorePanel'
 import ImpactWorkbench from '../components/dashboard/ImpactWorkbench'
@@ -20,7 +19,7 @@ export default function DashboardPage() {
   const [repo, setRepo] = useState<Repository | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const [activeTab, setActiveTab] = useState<TabId>('understand')
   const [rateLimits, setRateLimits] = useState({ today: 0, session: 0 })
   const [askPrefill, setAskPrefill]       = useState<string | undefined>()
   const [impactPrefill, setImpactPrefill] = useState<string | undefined>()
@@ -136,6 +135,7 @@ export default function DashboardPage() {
                     repo={repo}
                     onRateLimitsChange={setRateLimits}
                     initialQuestion={askPrefill}
+                    onOpenCodeSearch={() => setActiveTab('explore')}
                   />
                 </div>
               </div>
@@ -151,9 +151,8 @@ export default function DashboardPage() {
                   <p className="text-sm text-ink-muted leading-relaxed">{meta.description}</p>
                 </div>
 
-                {activeTab === 'overview'   && <OverviewPanel repo={repo} onNavigate={setActiveTab} />}
-                {activeTab === 'understand' && <UnderstandPanel repo={repo} onAskAI={handleAskAI} onCheckImpact={handleCheckImpact} />}
-                {activeTab === 'explore'    && <ExplorePanel repo={repo} onCheckImpact={handleCheckImpact} />}
+                {activeTab === 'understand' && <UnderstandPanel repo={repo} onAskAI={handleAskAI} onCheckImpact={handleCheckImpact} onNavigate={setActiveTab} />}
+                {activeTab === 'explore'    && <ExplorePanel repo={repo} onAskAI={handleAskAI} onCheckImpact={handleCheckImpact} />}
                 {activeTab === 'change'     && repoId && <ImpactWorkbench repoId={repoId} onAskAI={handleAskAI} defaultSymbol={impactPrefill} />}
                 {activeTab === 'evaluate'   && repoId && <EvalDashboard repoId={repoId} onAskAI={handleAskAI} />}
               </div>

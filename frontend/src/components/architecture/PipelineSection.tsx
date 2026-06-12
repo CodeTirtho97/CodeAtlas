@@ -21,7 +21,7 @@ export default function PipelineSection() {
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {step.tags.map(tag => (
-                      <span key={tag} className="text-[10px] font-medium text-ink-subtle bg-surface-raised border border-surface-border/60 px-2 py-0.5 rounded-full">
+                      <span key={tag} className={`text-[10px] font-semibold border px-2 py-0.5 rounded-full ${step.color.tag}`}>
                         {tag}
                       </span>
                     ))}

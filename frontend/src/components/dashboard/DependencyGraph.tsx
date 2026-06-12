@@ -40,6 +40,11 @@ export interface Props {
   deps:           Record<string, DepEntry>
   maxNodes?:      number
   onCheckImpact?: (filePath: string) => void
+  onAskFile?:     (filePath: string) => void
+  /** Externally requested search query (shared with the list view). */
+  search?:        string
+  /** Externally requested node focus — ts forces re-trigger for repeat clicks. */
+  focusFile?:     { path: string; ts: number } | null
 }
 
 // ─── Contexts (avoids threading props through ReactFlow node data) ────────────
@@ -56,10 +61,26 @@ function roleOf(usedBy: number, uses: number, total: number): NodeData['role'] {
 }
 
 const ROLE = {
-  hub:    { bg: '#1a0f00', border: '#f97316', text: '#fed7aa', dot: '#f97316' },
-  sink:   { bg: '#001510', border: '#34d399', text: '#a7f3d0', dot: '#34d399' },
-  source: { bg: '#00091a', border: '#60a5fa', text: '#bfdbfe', dot: '#60a5fa' },
-  normal: { bg: '#0d1117', border: '#334155', text: '#94a3b8', dot: '#64748b' },
+  hub: {
+    bg:        'linear-gradient(170deg, rgba(249,115,22,0.14) 0%, rgba(249,115,22,0.04) 60%), #0c0f16',
+    bgFocused: 'linear-gradient(170deg, rgba(249,115,22,0.32) 0%, rgba(249,115,22,0.10) 100%), #140c05',
+    border: '#f97316', text: '#fed7aa', dot: '#f97316',
+  },
+  sink: {
+    bg:        'linear-gradient(170deg, rgba(52,211,153,0.12) 0%, rgba(52,211,153,0.03) 60%), #0c0f16',
+    bgFocused: 'linear-gradient(170deg, rgba(52,211,153,0.28) 0%, rgba(52,211,153,0.08) 100%), #051410',
+    border: '#34d399', text: '#a7f3d0', dot: '#34d399',
+  },
+  source: {
+    bg:        'linear-gradient(170deg, rgba(96,165,250,0.12) 0%, rgba(96,165,250,0.03) 60%), #0c0f16',
+    bgFocused: 'linear-gradient(170deg, rgba(96,165,250,0.28) 0%, rgba(96,165,250,0.08) 100%), #060d1c',
+    border: '#60a5fa', text: '#bfdbfe', dot: '#60a5fa',
+  },
+  normal: {
+    bg:        'linear-gradient(170deg, rgba(148,163,184,0.07) 0%, rgba(148,163,184,0.02) 60%), #0c0f16',
+    bgFocused: 'linear-gradient(170deg, rgba(148,163,184,0.18) 0%, rgba(148,163,184,0.06) 100%), #0e1320',
+    border: '#475569', text: '#94a3b8', dot: '#64748b',
+  },
 }
 
 // ─── Custom node ──────────────────────────────────────────────────────────────
@@ -70,51 +91,48 @@ function DepNode({ data }: NodeProps) {
 
   const opacity = d.dimmed ? 0.08 : 1
 
-  // Border: focused = thick glow in role colour; connected = semi-bright role colour; highlighted = amber
+  // Border: focused = full role colour; connected = strong; highlighted = amber; default = soft
   const borderColor = d.focused
     ? st.border
     : d.connected
-    ? st.border
+    ? st.border + 'cc'
     : d.highlighted
     ? '#fbbf24'
-    : st.border
+    : st.border + '66'
 
-  const borderWidth = d.focused ? 2.5 : d.connected ? 1.5 : 1
+  const borderWidth = d.focused ? 2 : d.connected ? 1.5 : 1
 
   const boxShadow = d.focused
-    ? `0 0 0 3px ${st.border}55, 0 0 18px ${st.border}44`
+    ? `0 0 0 3px ${st.border}44, 0 8px 24px ${st.border}33`
     : d.connected
-    ? `0 0 0 1px ${st.border}33`
-    : 'none'
-
-  // Slightly lift background on focus/connected
-  const bg = d.focused
-    ? st.border + '22'   // faint role-tinted background
-    : d.connected
-    ? st.bg
-    : st.bg
+    ? `0 0 0 1px ${st.border}33, 0 4px 12px rgba(0,0,0,0.35)`
+    : '0 2px 10px rgba(0,0,0,0.35)'
 
   return (
     <div
+      title={d.fullPath}
       style={{
-        background: bg,
+        background: d.focused ? st.bgFocused : st.bg,
         borderColor,
         borderWidth,
         boxShadow,
         minWidth: 165, maxWidth: 215,
         opacity,
-        transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s',
+        transform: d.focused ? 'scale(1.04)' : 'scale(1)',
+        transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s, transform 0.2s, background 0.2s',
       }}
       className="rounded-xl border px-3 py-2.5"
     >
       <Handle type="target" position={Position.Top}
         style={{ background: st.border, width: 7, height: 7, border: 'none' }} />
 
-      <p className="text-[11px] font-bold font-mono truncate leading-tight" style={{ color: st.text }}>
-        {d.label}
-      </p>
-      <p className="text-[9px] font-mono mt-0.5 truncate opacity-40" style={{ color: st.text }}
-        title={d.fullPath}>{d.fullPath}</p>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: st.dot }} />
+        <p className="text-[11px] font-bold font-mono truncate leading-tight"
+          style={{ color: d.focused ? '#ffffff' : st.text }}>
+          {d.label}
+        </p>
+      </div>
 
       <div className="flex items-center gap-3 mt-2 pt-1.5 border-t border-white/5 flex-wrap">
         {d.usedByCount > 0 && (
@@ -137,7 +155,7 @@ function DepNode({ data }: NodeProps) {
 }
 
 const NODE_TYPES = { dep: DepNode }
-const NODE_W = 215, NODE_H = 85
+const NODE_W = 215, NODE_H = 70
 
 // ─── Dagre layout ─────────────────────────────────────────────────────────────
 
@@ -286,8 +304,10 @@ function buildComponent(
 // ─── Feature 5: Mini-card for ≤3-file components ─────────────────────────────
 // Renders compact node cards (same width as graph nodes) centred vertically.
 
-function MiniCard({ files, deps, onCheckImpact }: {
-  files: string[]; deps: Record<string, DepEntry>; onCheckImpact?: (p: string) => void
+function MiniCard({ files, deps, onCheckImpact, onAskFile }: {
+  files: string[]; deps: Record<string, DepEntry>
+  onCheckImpact?: (p: string) => void
+  onAskFile?: (p: string) => void
 }) {
   const sorted = [...files].filter(f => deps[f]).sort((a, b) => {
     const ta = (deps[a]?.uses.length ?? 0) + (deps[a]?.used_by.length ?? 0)
@@ -341,14 +361,27 @@ function MiniCard({ files, deps, onCheckImpact }: {
                 )}
               </div>
 
-              {onCheckImpact && (
-                <button onClick={() => onCheckImpact(f)}
-                  title="Switches to Impact Area tab with this file pre-loaded for analysis"
-                  className="mt-2 w-full text-[9px] font-semibold text-orange-300
-                             bg-orange-500/10 border border-orange-500/20 rounded-lg py-1
-                             hover:bg-orange-500/20 transition-colors">
-                  → Check impact if changed
-                </button>
+              {(onCheckImpact || onAskFile) && (
+                <div className="flex gap-1.5 mt-2">
+                  {onAskFile && (
+                    <button onClick={() => onAskFile(f)}
+                      title="Ask the AI to explain this file"
+                      className="flex-1 text-[9px] font-semibold text-pink-300
+                                 bg-pink-500/10 border border-pink-500/20 rounded-lg py-1
+                                 hover:bg-pink-500/20 transition-colors">
+                      Ask AI
+                    </button>
+                  )}
+                  {onCheckImpact && (
+                    <button onClick={() => onCheckImpact(f)}
+                      title="Switches to the Impact tab with this file pre-loaded for analysis"
+                      className="flex-1 text-[9px] font-semibold text-orange-300
+                                 bg-orange-500/10 border border-orange-500/20 rounded-lg py-1
+                                 hover:bg-orange-500/20 transition-colors">
+                      Check impact →
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -358,7 +391,30 @@ function MiniCard({ files, deps, onCheckImpact }: {
   )
 }
 
-// ─── Combined info bar (orientation + legend + hints) ────────────────────────
+// ─── Shared role legend (one vocabulary for graph, list, and hub chips) ───────
+
+export const ROLE_LEGEND: { color: string; label: string; desc: string; textCls: string }[] = [
+  { color: ROLE.hub.dot,    label: 'Hub',      desc: 'risky to change',  textCls: 'text-orange-300' },
+  { color: ROLE.sink.dot,   label: 'Shared',   desc: 'many import this', textCls: 'text-emerald-300' },
+  { color: ROLE.source.dot, label: 'Consumer', desc: 'imports many',     textCls: 'text-blue-300'   },
+  { color: ROLE.normal.dot, label: 'Normal',   desc: 'few connections',  textCls: 'text-slate-400'  },
+]
+
+export function RoleLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+      {ROLE_LEGEND.map(({ color, label, desc, textCls }) => (
+        <div key={label} className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+          <span className={`font-semibold ${textCls}`}>{label}</span>
+          <span className="text-slate-600">· {desc}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Combined info bar (orientation + legend) ─────────────────────────────────
 
 function GraphInfoBar() {
   return (
@@ -387,32 +443,18 @@ function GraphInfoBar() {
       {/* Divider */}
       <div className="w-px h-4 bg-slate-700/60 shrink-0 hidden sm:block" />
 
-      {/* Legend */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        {([
-          [ROLE.hub.dot,    'Hub',      'risky to change',  'text-orange-300'],
-          [ROLE.sink.dot,   'Shared',   'many import this', 'text-emerald-300'],
-          [ROLE.source.dot, 'Consumer', 'imports many',     'text-blue-300'],
-          [ROLE.normal.dot, 'Normal',   'few connections',  'text-slate-400'],
-        ] as [string, string, string, string][]).map(([color, label, desc, textCls]) => (
-          <div key={label} className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
-            <span className={`font-semibold ${textCls}`}>{label}</span>
-            <span className="text-slate-600">· {desc}</span>
-          </div>
-        ))}
-      </div>
-
-
+      <RoleLegend />
     </div>
   )
 }
 
 // ─── Full ReactFlow graph for one component ───────────────────────────────────
 
-function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
+function ComponentGraphInner({ files, deps, search, onCheckImpact, onAskFile, focusRequest }: {
   files: string[]; deps: Record<string, DepEntry>
   search: string; onCheckImpact?: (p: string) => void
+  onAskFile?: (p: string) => void
+  focusRequest?: { path: string; ts: number } | null
 }) {
   const rf = useReactFlow()
   const { nodes: initN, edges: initE } = useMemo(
@@ -422,10 +464,14 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initE)
   const [focusedId, setFocusedId]       = useState<string | null>(null)
   const [focusedRole, setFocusedRole]   = useState<NodeData['role']>('normal')
-  const baseEdgesRef  = useRef(initE)
-  const containerRef  = useRef<HTMLDivElement>(null)
+  const [hintsVisible, setHintsVisible] = useState(true)
+  const [scrollHint, setScrollHint]     = useState(false)
+  const baseEdgesRef    = useRef(initE)
+  const containerRef    = useRef<HTMLDivElement>(null)
+  const scrollHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Ctrl + scroll → zoom; plain scroll → page scrolls normally
+  // Ctrl + scroll → zoom; plain scroll → page scrolls normally, but teach the
+  // gesture the moment it's needed (Google-Maps-style overlay).
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -434,10 +480,18 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
         e.preventDefault()
         const factor = e.deltaY < 0 ? 1.12 : 0.89
         rf.zoomTo(rf.getZoom() * factor, { duration: 0 })
+        setScrollHint(false)
+      } else {
+        setScrollHint(true)
+        if (scrollHintTimer.current) clearTimeout(scrollHintTimer.current)
+        scrollHintTimer.current = setTimeout(() => setScrollHint(false), 1600)
       }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      if (scrollHintTimer.current) clearTimeout(scrollHintTimer.current)
+    }
   }, [rf])
 
   // Rebuild on deps / search change
@@ -447,6 +501,14 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
     baseEdgesRef.current = e
     setFocusedId(null)
   }, [files, deps, search, setNodes, setEdges])
+
+  // Apply an externally requested focus (e.g. clicking a "Top hubs" chip).
+  // Declared after the rebuild effect so it wins on mount.
+  useEffect(() => {
+    if (focusRequest && files.includes(focusRequest.path)) {
+      setFocusedId(focusRequest.path)
+    }
+  }, [focusRequest, files])
 
   // Focus logic: highlight cluster + zoom in
   useEffect(() => {
@@ -520,6 +582,7 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
   }, [])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    setHintsVisible(false)
     setFocusedId(prev => prev === node.id ? null : node.id)
   }, [])
 
@@ -557,13 +620,24 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
                 {focusedId.split('/').pop()}
               </code>
             </span>
+            {onAskFile && (
+              <button
+                onClick={() => onAskFile(focusedId)}
+                title="Ask the AI to explain this file"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-bold
+                           text-pink-300 bg-pink-500/15 border border-pink-500/30
+                           hover:bg-pink-500/25 transition-colors ml-1"
+              >
+                Ask AI
+              </button>
+            )}
             {onCheckImpact && (
               <button
                 onClick={() => onCheckImpact(focusedId)}
-                title="Switches to Impact Area tab with this file pre-loaded for analysis"
+                title="Switches to the Impact tab with this file pre-loaded for analysis"
                 className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-bold
                            text-orange-300 bg-orange-500/15 border border-orange-500/30
-                           hover:bg-orange-500/25 transition-colors ml-1"
+                           hover:bg-orange-500/25 transition-colors"
               >
                 Check impact →
               </button>
@@ -581,6 +655,7 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
           nodeTypes={NODE_TYPES}
           onNodeClick={onNodeClick}
           onPaneClick={() => setFocusedId(null)}
+          onMoveStart={() => setHintsVisible(false)}
           onInit={onInit}
           minZoom={0.1} maxZoom={3}
           zoomOnScroll={false}
@@ -595,10 +670,29 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
             style={{ background: '#0f172a', border: '1px solid #1e293b' }} />
         </ReactFlow>
 
-        {/* Focus hint — bottom-right */}
-        <div className="absolute bottom-3 right-3 z-10 pointer-events-none select-none
+        {/* Reactive zoom hint — appears at the bottom centre when scrolling without Ctrl */}
+        <div className={`absolute bottom-4 inset-x-0 z-20 flex justify-center pointer-events-none
+                        transition-opacity duration-300 ${scrollHint ? 'opacity-100' : 'opacity-0'}`}>
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-black/75 backdrop-blur-sm
+                          border border-slate-600/80 shadow-2xl shadow-black/50">
+            <kbd className="inline-flex items-center px-1.5 py-0.5 rounded border border-slate-500
+                            bg-slate-700 text-[10px] font-bold text-slate-200 leading-none">
+              Ctrl
+            </kbd>
+            <span className="text-slate-400 text-xs">+</span>
+            <kbd className="inline-flex items-center px-1.5 py-0.5 rounded border border-slate-500
+                            bg-slate-700 text-[10px] font-bold text-slate-200 leading-none">
+              Scroll
+            </kbd>
+            <span className="text-xs text-slate-200 font-medium">to zoom the graph</span>
+          </div>
+        </div>
+
+        {/* Focus hint — bottom-right; fades after first interaction */}
+        <div className={`absolute bottom-3 right-3 z-10 pointer-events-none select-none
                         flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
-                        bg-slate-800/60 backdrop-blur-sm border border-slate-700/50 text-[8px]">
+                        bg-slate-800/60 backdrop-blur-sm border border-slate-700/50 text-[8px]
+                        transition-opacity duration-700 ${hintsVisible ? 'opacity-100' : 'opacity-0'}`}>
           <svg className="w-2.5 h-2.5 text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" />
           </svg>
@@ -608,10 +702,11 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact }: {
           <span className="text-slate-400">to reset</span>
         </div>
 
-        {/* Keyboard hint — top-right, two lines */}
-        <div className="absolute top-3 right-3 z-10 pointer-events-none select-none
+        {/* Keyboard hint — top-right, two lines; fades after first interaction */}
+        <div className={`absolute top-3 right-3 z-10 pointer-events-none select-none
                         flex flex-col gap-1.5 items-center px-2.5 py-2 rounded-lg
-                        bg-slate-800/60 backdrop-blur-sm border border-slate-700/50">
+                        bg-slate-800/60 backdrop-blur-sm border border-slate-700/50
+                        transition-opacity duration-700 ${hintsVisible ? 'opacity-100' : 'opacity-0'}`}>
           {/* Line 1: zoom */}
           <div className="flex items-center gap-1">
             <kbd className="inline-flex items-center px-1 py-px rounded border border-slate-600
@@ -656,10 +751,9 @@ function ComponentGraph(props: Parameters<typeof ComponentGraphInner>[0]) {
 
 const MAX_TABS = 8
 
-export default function DependencyGraph({ deps, onCheckImpact }: Props) {
+export default function DependencyGraph({ deps, onCheckImpact, onAskFile, search = '', focusFile }: Props) {
   const components = useMemo(() => findComponents(deps), [deps])
   const [active, setActive]   = useState(0)
-  const [search, setSearch]   = useState('')
 
   const { tabs, isolates } = useMemo(() => {
     const multi      = components.filter(c => c.files.length >= 2)
@@ -685,6 +779,13 @@ export default function DependencyGraph({ deps, onCheckImpact }: Props) {
     if (idx !== -1 && idx !== active) setActive(idx)
   }, [search]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // External focus request (top-hubs chip) → jump to the tab containing the file
+  useEffect(() => {
+    if (!focusFile) return
+    const idx = allTabs.findIndex(t => t.files.includes(focusFile.path))
+    if (idx !== -1 && idx !== active) setActive(idx)
+  }, [focusFile]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => { setActive(0) }, [deps])
 
   if (allTabs.length === 0) {
@@ -703,24 +804,6 @@ export default function DependencyGraph({ deps, onCheckImpact }: Props) {
 
       {/* Info bar: orientation + legend + hints */}
       <GraphInfoBar />
-
-      {/* Feature 4: Search */}
-      <div className="relative">
-        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none"
-          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-        </svg>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search for a file across all groups…"
-          className="w-full bg-surface-raised border border-surface-border rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500/50 transition-colors"
-        />
-        {search && (
-          <button onClick={() => setSearch('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">✕</button>
-        )}
-      </div>
 
       {/* Feature 2: Component chips */}
       <div className="flex items-start gap-1.5 flex-wrap">
@@ -771,13 +854,15 @@ export default function DependencyGraph({ deps, onCheckImpact }: Props) {
 
       {/* Feature 5: Mini-card vs full graph */}
       {isMini ? (
-        <MiniCard files={current.files} deps={deps} onCheckImpact={onCheckImpact} />
+        <MiniCard files={current.files} deps={deps} onCheckImpact={onCheckImpact} onAskFile={onAskFile} />
       ) : (
         <ComponentGraph
           key={current.id}
           files={current.files} deps={deps}
           search={search}
           onCheckImpact={onCheckImpact}
+          onAskFile={onAskFile}
+          focusRequest={focusFile}
         />
       )}
 

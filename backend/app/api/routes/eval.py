@@ -37,6 +37,16 @@ class AblationResultResponse(BaseModel):
     passed: int
 
 
+class PreviousRunSummary(BaseModel):
+    """Headline metrics of the run before this one — lets the UI show a trend."""
+    recall_at_5: float
+    mrr: float
+    total_questions: int
+    passed: int
+    citation_precision: Optional[float] = None
+    ran_at: Optional[datetime] = None
+
+
 class EvalReportResponse(BaseModel):
     recall_at_5: float
     mrr: float
@@ -46,11 +56,13 @@ class EvalReportResponse(BaseModel):
     ablation: List[AblationResultResponse] = []
     citation_precision: Optional[float] = None
     ran_at: Optional[datetime] = None
+    previous: Optional[PreviousRunSummary] = None
 
 
 def _repo_to_response(repo: Repository) -> EvalReportResponse:
     """Build EvalReportResponse from a repo's cached eval_report_json."""
     d = repo.eval_report_json
+    prev = d.get("previous")
     return EvalReportResponse(
         recall_at_5=d["recall_at_5"],
         mrr=d["mrr"],
@@ -60,6 +72,7 @@ def _repo_to_response(repo: Repository) -> EvalReportResponse:
         ablation=[AblationResultResponse(**a) for a in d.get("ablation", [])],
         citation_precision=d.get("citation_precision"),
         ran_at=repo.eval_ran_at,
+        previous=PreviousRunSummary(**prev) if prev else None,
     )
 
 
@@ -112,8 +125,22 @@ async def run_retrieval_eval(
         dependency_json=repo.dependency_json,
     )
 
+    # Snapshot the run being replaced so the UI can show a since-last-run delta
+    previous = None
+    if repo.eval_report_json:
+        old = repo.eval_report_json
+        previous = {
+            "recall_at_5": old["recall_at_5"],
+            "mrr": old["mrr"],
+            "total_questions": old["total_questions"],
+            "passed": old["passed"],
+            "citation_precision": old.get("citation_precision"),
+            "ran_at": repo.eval_ran_at.isoformat() if repo.eval_ran_at else None,
+        }
+
     # Persist result so next visit loads instantly
     report_dict = {
+        "previous": previous,
         "recall_at_5": report.recall_at_5,
         "mrr": report.mrr,
         "total_questions": report.total_questions,

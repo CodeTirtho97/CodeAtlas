@@ -66,7 +66,7 @@ const FEATURES = [
       </svg>
     ),
     tag: 'Static analysis',
-    title: 'Impact Area',
+    title: 'Impact',
     desc: "Type any function, class, or file and instantly see every other file that depends on it. Know exactly what will break before you make a single change.",
   },
   {

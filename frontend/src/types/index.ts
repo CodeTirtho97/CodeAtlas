@@ -58,6 +58,42 @@ export interface Repository {
   dependencies: Record<string, FileDependency> | null
 }
 
+// ── Composition ───────────────────────────────────────────────────────────────
+
+export interface CompositionBucket {
+  name: string
+  count: number
+}
+
+export interface RepoComposition {
+  total_chunks: number
+  total_files: number
+  languages: CompositionBucket[]
+  roles: CompositionBucket[]
+  chunk_types: CompositionBucket[]
+}
+
+// ── Code search (retrieval-only) ──────────────────────────────────────────────
+
+export interface CodeSearchHit {
+  file_path: string
+  chunk_type: string
+  language: string
+  function_name: string | null
+  class_name: string | null
+  line_start: number | null
+  line_end: number | null
+  architectural_role: string | null
+  chunk_preview: string
+  score: number
+  reason?: string | null   // one-line "why this matched" (absent if LLM unavailable)
+}
+
+export interface CodeSearchResponse {
+  query: string
+  results: CodeSearchHit[]
+}
+
 // ── Ingestion ─────────────────────────────────────────────────────────────────
 
 export interface IngestionJob {
@@ -169,6 +205,15 @@ export interface AblationResult {
   passed: number
 }
 
+export interface PreviousEvalRun {
+  recall_at_5: number
+  mrr: number
+  total_questions: number
+  passed: number
+  citation_precision: number | null
+  ran_at: string | null
+}
+
 export interface EvalReport {
   recall_at_5: number
   mrr: number
@@ -178,6 +223,7 @@ export interface EvalReport {
   ablation: AblationResult[]          // per-mode ablation comparison
   citation_precision: number | null   // fraction of answers that cited the right file
   ran_at?: string | null
+  previous?: PreviousEvalRun | null   // headline metrics of the run before this one
 }
 
 // ── Streaming chat ────────────────────────────────────────────────────────────
@@ -185,5 +231,7 @@ export interface EvalReport {
 export type StreamEvent =
   | { type: 'sources'; sources: SourceCitation[] }
   | { type: 'token'; content: string }
-  | { type: 'done'; user_message_id: string; message_id: string; questions_today: number; questions_in_session: number }
+  | { type: 'generation_error'; message: string }
+  | { type: 'provider_switch'; provider: string; message: string }
+  | { type: 'done'; provider?: string; user_message_id: string; message_id: string; questions_today: number; questions_in_session: number }
   | { type: 'error'; message: string }

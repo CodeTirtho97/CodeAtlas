@@ -342,29 +342,16 @@ async def ask_question_stream(
     )
     history = [{"role": m.role, "content": m.content} for m in reversed(prev_result.scalars().all())]
 
-    # Save user message before stream starts so it persists even on client disconnect
-    user_msg = ChatMessage(session_id=session_id, role="user", content=question, sources_json=None)
-    db_session.add(user_msg)
-
-    if session_msg_count == 0:
-        chat_session.title = question[:57] + "…" if len(question) > 57 else question
-    chat_session.message_count += 1
-    chat_session.updated_at = datetime.utcnow()
-
-    await db_session.commit()
-    await db_session.refresh(user_msg)
-
     # Snapshot values for generator closure (db_session closes when response starts)
-    user_message_id = str(user_msg.id)
     repo_id = str(chat_session.repository_id)
     repo_name = repo.name
-    questions_today = daily_msg_count + 1
-    questions_in_session = session_msg_count + 1
     qdrant_client = await get_qdrant_client()
 
     async def generate():
         accumulated_text: list = []
         accumulated_sources: list = []
+        generation_failed = [False]
+        active_provider = ["gemini"]
 
         async for event_str in stream_answer_with_history(
             client=qdrant_client,
@@ -373,11 +360,7 @@ async def ask_question_stream(
             repo_name=repo_name,
             history=history,
         ):
-            # Strip the 'data: ' prefix to parse, re-yield everything except the bare 'done'
-            raw = event_str
-            if raw.startswith("data: "):
-                raw = raw[6:]
-            raw = raw.strip()
+            raw = event_str[6:].strip() if event_str.startswith("data: ") else event_str.strip()
 
             try:
                 payload = _json.loads(raw)
@@ -389,30 +372,71 @@ async def ask_question_stream(
             if evt_type == "token":
                 accumulated_text.append(payload.get("content", ""))
                 yield event_str
+            elif evt_type == "generation_error":
+                # Generation failed — forward as a token so the UI displays it,
+                # but flag so we skip saving and counting this attempt.
+                generation_failed[0] = True
+                err_content = "\n\n" + payload.get("message", "*Unable to complete the answer. Please try again.*")
+                accumulated_text.append(err_content)
+                yield f'data: {_json.dumps({"type": "token", "content": err_content})}\n\n'
+            elif evt_type == "provider_switch":
+                active_provider[0] = payload.get("provider", "groq")
+                yield event_str  # Forward to client so it can show a toast
             elif evt_type == "sources":
                 accumulated_sources = payload.get("sources", [])
                 yield event_str
             elif evt_type == "done":
-                # Save assistant message, then emit the richer done event
                 full_answer = "".join(accumulated_text)
-                async with AsyncSessionLocal() as save_session:
-                    assistant_msg = ChatMessage(
-                        session_id=session_id,
-                        role="assistant",
-                        content=full_answer,
-                        sources_json=accumulated_sources,
-                    )
-                    save_session.add(assistant_msg)
-                    await save_session.commit()
-                    await save_session.refresh(assistant_msg)
 
-                done_event = {
-                    "type": "done",
-                    "user_message_id": user_message_id,
-                    "message_id": str(assistant_msg.id),
-                    "questions_today": questions_today,
-                    "questions_in_session": questions_in_session,
-                }
+                if not generation_failed[0] and full_answer.strip():
+                    # Only save messages and increment counters on a real answer
+                    async with AsyncSessionLocal() as save_session:
+                        user_msg = ChatMessage(
+                            session_id=session_id, role="user",
+                            content=question, sources_json=None,
+                        )
+                        save_session.add(user_msg)
+                        await save_session.flush()
+
+                        assistant_msg = ChatMessage(
+                            session_id=session_id, role="assistant",
+                            content=full_answer, sources_json=accumulated_sources,
+                        )
+                        save_session.add(assistant_msg)
+
+                        cs_result = await save_session.execute(
+                            select(ChatSession).where(ChatSession.id == session_id)
+                        )
+                        cs = cs_result.scalar_one_or_none()
+                        if cs:
+                            cs.message_count += 1
+                            cs.updated_at = datetime.utcnow()
+                            if session_msg_count == 0:
+                                cs.title = question[:57] + "…" if len(question) > 57 else question
+
+                        await save_session.commit()
+                        await save_session.refresh(user_msg)
+                        await save_session.refresh(assistant_msg)
+
+                    done_event = {
+                        "type": "done",
+                        "provider": active_provider[0],
+                        "user_message_id": str(user_msg.id),
+                        "message_id": str(assistant_msg.id),
+                        "questions_today": daily_msg_count + 1,
+                        "questions_in_session": session_msg_count + 1,
+                    }
+                else:
+                    # Failed generation — don't save, don't count
+                    done_event = {
+                        "type": "done",
+                        "provider": active_provider[0],
+                        "user_message_id": "",
+                        "message_id": "",
+                        "questions_today": daily_msg_count,
+                        "questions_in_session": session_msg_count,
+                    }
+
                 yield f"data: {_json.dumps(done_event)}\n\n"
 
     return StreamingResponse(

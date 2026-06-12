@@ -13,6 +13,13 @@ export default function Sidebar({ repo, activeTab, onTabChange, onBack, rateLimi
   const shortName = repo.github_url.replace('https://github.com/', '')
   const repoDisplayName = shortName.split('/')[1] || shortName
 
+  // Backend resets at UTC midnight — show that time in the user's local timezone
+  const utcMidnightLocal = (() => {
+    const now = new Date()
+    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
+    return next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  })()
+
   return (
     <aside className="w-72 shrink-0 flex flex-col border-r border-surface-border/50 overflow-y-auto">
 
@@ -116,7 +123,7 @@ export default function Sidebar({ repo, activeTab, onTabChange, onBack, rateLimi
                             </span>
                             <div className="flex flex-col items-end shrink-0 ml-2">
                               <span className="text-[8px] text-slate-400 leading-tight">Renews</span>
-                              <span className="text-[8px] text-slate-400 leading-tight">12AM IST</span>
+                              <span className="text-[8px] text-slate-400 leading-tight">{utcMidnightLocal}</span>
                             </div>
                           </div>
                         </>

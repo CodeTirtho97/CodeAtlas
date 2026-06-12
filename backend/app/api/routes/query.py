@@ -1,8 +1,10 @@
 import uuid
 from datetime import datetime
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -14,8 +16,98 @@ from app.models.db.user import User
 from app.models.schemas import QueryRequest, QueryResponse, SourceCitation
 from app.api.routes.auth import get_current_user_dependency
 from app.services.generation.qa import answer_question, stream_answer_question
+from app.services.search.explain import explain_hits
+from app.services.search.retriever import search as retrieval_search
 
 router = APIRouter(prefix="/query", tags=["queries"])
+
+
+class CodeSearchRequest(BaseModel):
+    repository_id: uuid.UUID
+    query: str
+    top_k: int = 10
+
+
+class CodeSearchHit(BaseModel):
+    file_path: str
+    chunk_type: str
+    language: str
+    function_name: Optional[str]
+    class_name: Optional[str]
+    line_start: Optional[int]
+    line_end: Optional[int]
+    architectural_role: Optional[str]
+    chunk_preview: str
+    score: float
+    reason: Optional[str] = None  # one-line "why this matched" (absent if LLM unavailable)
+
+
+class CodeSearchResponse(BaseModel):
+    query: str
+    results: List[CodeSearchHit]
+
+
+@router.post("/search", response_model=CodeSearchResponse)
+async def search_code(
+    request: CodeSearchRequest,
+    current_user: User = Depends(get_current_user_dependency),
+    session: AsyncSession = Depends(get_session),
+) -> CodeSearchResponse:
+    """Retrieval-only semantic code search — hybrid search without LLM generation.
+
+    Costs one embedding call; no generation quota is consumed, so it is safe
+    to call freely from the Explore tab.
+    """
+    query = request.query.strip()
+    if len(query) < 3:
+        raise HTTPException(status_code=400, detail="Query too short (min 3 chars).")
+    if len(query) > 300:
+        raise HTTPException(status_code=400, detail="Query too long (max 300 chars).")
+
+    repo = await _get_indexed_repo(session, str(request.repository_id), current_user.id)
+
+    qdrant_client = await get_qdrant_client()
+    results = await retrieval_search(
+        client=qdrant_client,
+        query=query,
+        repository_id=str(repo.id),
+        top_k=20,  # over-fetch, then re-rank and trim below
+        rerank=False,  # keep it instant + free: pure RRF order, no LLM rerank
+    )
+
+    # Down-weight prose chunks (READMEs, HTML, docs) so actual implementations
+    # outrank documentation that merely mentions the query terms.
+    _PROSE_PENALTY = 0.6
+    _PROSE_TYPES = {"raw", "doc"}
+
+    def _adjusted(r) -> float:
+        return r.score * (_PROSE_PENALTY if (r.chunk_type or "").lower() in _PROSE_TYPES else 1.0)
+
+    ranked = sorted(results, key=_adjusted, reverse=True)
+    top = ranked[: max(1, min(request.top_k, 20))]
+
+    # One batched LLM call for per-hit justifications; fail-soft → reasons may be None
+    reasons = await explain_hits(query, top)
+
+    return CodeSearchResponse(
+        query=query,
+        results=[
+            CodeSearchHit(
+                file_path=r.file_path,
+                chunk_type=r.chunk_type,
+                language=r.language,
+                function_name=r.function_name,
+                class_name=r.class_name,
+                line_start=r.line_start,
+                line_end=r.line_end,
+                architectural_role=r.architectural_role,
+                chunk_preview=r.chunk_preview,
+                score=_adjusted(r),  # adjusted so the UI's relevance cutoff matches this order
+                reason=(reasons[i] or None) if reasons else None,
+            )
+            for i, r in enumerate(top)
+        ],
+    )
 
 
 @router.post("", response_model=QueryResponse)

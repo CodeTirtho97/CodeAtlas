@@ -4,17 +4,19 @@ from app.core.config import settings
 
 import ssl as _ssl
 
-_ssl_ctx = _ssl.create_default_context()
+def _build_connect_args(url: str) -> dict:
+    args: dict = {"server_settings": {"jit": "off"}}
+    # Use SSL only for remote/cloud databases, not local Docker/localhost
+    if "localhost" not in url and "127.0.0.1" not in url and "postgres:5432" not in url:
+        args["ssl"] = _ssl.create_default_context()
+    return args
 
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
     poolclass=NullPool,
-    connect_args={
-        "ssl": _ssl_ctx,
-        "server_settings": {"jit": "off"},
-    },
+    connect_args=_build_connect_args(settings.DATABASE_URL),
 )
 
 # Create session factory

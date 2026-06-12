@@ -4,18 +4,23 @@ Flow:
   1. Embed query (RETRIEVAL_QUERY)
   2. Hybrid search → top-K chunks with metadata
   3. Build context string from retrieved chunks
-  4. Gemini prompt → structured JSON {answer, sources}
+  4. LLM prompt → answer (streaming or JSON)
   5. Return answer text + source citations
 
-The context passed to Gemini is annotated so the model can cite
-specific file/function/line references in its answer.
+Provider: Gemini 2.0 Flash (primary). If Gemini returns 429 or any API error,
+automatically falls back to Groq (llama-3.3-70b-versatile) when GROQ_API_KEY is set.
+A `provider_switch` SSE event is emitted before Groq tokens begin so the UI can
+show a toast notification.
 """
+import asyncio
 import json
 import logging
+import re
 from typing import AsyncGenerator, List, Optional
 
 from google import genai
 from google.genai import types as genai_types
+from groq import AsyncGroq
 from qdrant_client import AsyncQdrantClient
 
 from app.core.config import settings
@@ -23,17 +28,33 @@ from app.services.search.retriever import SearchResult, search
 
 log = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL  = "gemini-2.0-flash"
+GROQ_MODEL    = "llama-3.3-70b-versatile"
 DEFAULT_TOP_K = 10
 
-# Reuse a single async client across all requests
+# ─── Client singletons ────────────────────────────────────────────────────────
+
 _gemini_client: Optional[genai.Client] = None
+_groq_client:   Optional[AsyncGroq]    = None
+
 
 def _get_gemini_client() -> genai.Client:
     global _gemini_client
     if _gemini_client is None:
         _gemini_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
     return _gemini_client
+
+
+def _get_groq_client() -> Optional[AsyncGroq]:
+    global _groq_client
+    if not settings.GROQ_API_KEY:
+        return None
+    if _groq_client is None:
+        _groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+    return _groq_client
+
+
+# ─── Prompts ──────────────────────────────────────────────────────────────────
 
 _QA_PROMPT = """\
 You are an expert on the {repo_name} codebase.
@@ -113,221 +134,16 @@ CODE CONTEXT:
 Return ONLY the JSON object.
 """
 
-
-# ─── Public API ──────────────────────────────────────────────────────────────
-
-async def answer_question(
-    client: AsyncQdrantClient,
-    question: str,
-    repository_id: str,
-    repo_name: str,
-    top_k: int = DEFAULT_TOP_K,
-) -> dict:
-    """Run the full Q&A pipeline for one question.
-
-    Returns:
-        {
-          "answer": str,
-          "sources": [{file_path, function_name, class_name, line_start, line_end}]
-        }
-    """
-    # 1. Retrieve relevant chunks (with LLM reranking for best precision)
-    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
-
-    if not results:
-        return {
-            "answer": (
-                "I couldn't find relevant context for this question "
-                "in the indexed repository. Try rephrasing or ask about "
-                "a specific file or function."
-            ),
-            "sources": [],
-        }
-
-    # 2. Build annotated context string
-    context = _build_context(results)
-
-    # 3. Call Gemini
-    prompt = _QA_PROMPT.format(
-        repo_name=repo_name,
-        question=question,
-        context=context,
-    )
-
-    raw = await _call_gemini(prompt)
-    if raw is None:
-        return {
-            "answer": "Unable to generate an answer at this time. Please try again.",
-            "sources": [],
-        }
-
-    # 4. Enrich sources with metadata from search results
-    enriched_sources = _enrich_sources(raw.get("sources", []), results)
-
-    return {
-        "answer": raw.get("answer", ""),
-        "sources": enriched_sources,
-    }
-
-
-async def answer_with_history(
-    client: AsyncQdrantClient,
-    question: str,
-    repository_id: str,
-    repo_name: str,
-    history: List[dict],
-    top_k: int = DEFAULT_TOP_K,
-) -> dict:
-    """Run the Q&A pipeline with conversation history for chat context.
-
-    Args:
-        client: Qdrant async client
-        question: Current question from user
-        repository_id: Repository UUID string
-        repo_name: Repository name for context
-        history: List of prior messages [{"role": "user"|"assistant", "content": str}, ...]
-        top_k: Number of chunks to retrieve
-
-    Returns:
-        {
-          "answer": str,
-          "sources": [{file_path, function_name, class_name, line_start, line_end}]
-        }
-    """
-    # 1. Retrieve relevant chunks (with LLM reranking for best precision)
-    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
-
-    if not results:
-        return {
-            "answer": (
-                "I couldn't find relevant context for this question "
-                "in the indexed repository. Try rephrasing or ask about "
-                "a specific file or function."
-            ),
-            "sources": [],
-        }
-
-    # 2. Build annotated context string
-    context = _build_context(results)
-
-    # 3. Format conversation history
-    history_text = ""
-    if history:
-        history_lines = []
-        for msg in history:
-            role_label = "Developer" if msg["role"] == "user" else "Assistant"
-            history_lines.append(f"{role_label}: {msg['content']}")
-        history_text = "\n".join(history_lines)
-
-    # 4. Call Gemini with history-aware prompt
-    prompt = _QA_PROMPT_WITH_HISTORY.format(
-        repo_name=repo_name,
-        history=history_text,
-        question=question,
-        context=context,
-    )
-
-    raw = await _call_gemini(prompt)
-    if raw is None:
-        return {
-            "answer": "Unable to generate an answer at this time. Please try again.",
-            "sources": [],
-        }
-
-    # 5. Enrich sources with metadata from search results
-    enriched_sources = _enrich_sources(raw.get("sources", []), results)
-
-    return {
-        "answer": raw.get("answer", ""),
-        "sources": enriched_sources,
-    }
-
-
-# ─── Context Builder ─────────────────────────────────────────────────────────
-
-def _build_context(results: List[SearchResult]) -> str:
-    """Annotate retrieved chunks so Gemini can cite exact locations."""
-    parts = []
-    for i, r in enumerate(results, 1):
-        # Build a citation header the model can reference
-        name = r.function_name or r.class_name or "module"
-        loc = f"L{r.line_start}-{r.line_end}" if r.line_start else ""
-        header = f"[{i}] {r.file_path} — {name}  {loc}"
-        parts.append(f"{header}\n```{r.language}\n{r.chunk_preview}\n```")
-    return "\n\n".join(parts)
-
-
-# ─── Source Enrichment ────────────────────────────────────────────────────────
-
-def _enrich_sources(
-    raw_sources: list,
-    search_results: List[SearchResult],
-) -> List[dict]:
-    """Fill in missing metadata for cited sources from search results."""
-    # Build lookup: file_path + function_name → SearchResult
-    lookup: dict[str, SearchResult] = {}
-    for r in search_results:
-        key = f"{r.file_path}:{r.function_name or r.class_name or ''}"
-        lookup[key] = r
-
-    enriched = []
-    seen = set()
-
-    for source in raw_sources:
-        fp = source.get("file_path", "")
-        fn = source.get("function_name") or source.get("class_name") or ""
-        key = f"{fp}:{fn}"
-
-        if key in seen:
-            continue
-        seen.add(key)
-
-        # Fill gaps from search result metadata
-        matched = lookup.get(key)
-        enriched.append({
-            "file_path":     fp,
-            "function_name": source.get("function_name"),
-            "class_name":    source.get("class_name"),
-            "line_start":    source.get("line_start") or (matched.line_start if matched else None),
-            "line_end":      source.get("line_end")   or (matched.line_end   if matched else None),
-            "chunk_type":    matched.chunk_type    if matched else None,
-            "chunk_preview": matched.chunk_preview if matched else None,
-        })
-
-    return enriched
-
-
-# ─── Gemini Call ─────────────────────────────────────────────────────────────
-
-async def _call_gemini(prompt: str) -> Optional[dict]:
-    client = _get_gemini_client()
-
-    for attempt in range(1, 4):
-        try:
-            response = await client.aio.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                    # Disable extended thinking — context is already retrieved;
-                    # deep reasoning adds minutes of latency with no benefit here.
-                    thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
-                ),
-            )
-            return _parse_json(response.text)
-        except Exception as exc:
-            log.warning("Gemini Q&A attempt %d/3 failed: %s", attempt, exc)
-
-    return None
-
-
 _QA_STREAM_PROMPT = """\
 You are an expert on the {repo_name} codebase.
 
 Answer the developer's question using ONLY the code context provided below.
 Be specific: reference the exact functions, classes, and files from the context.
 Markdown is allowed.
+When your answer draws directly from a specific chunk, place a compact inline citation [N] \
+right after the relevant phrase (N = the chunk number from the context). \
+Use citations sparingly — only when they pinpoint an exact function, class, or code block. \
+Do not cite every sentence; cite only where it genuinely helps the reader locate the code.
 
 ---
 Question: {question}
@@ -343,6 +159,9 @@ You are an expert on the {repo_name} codebase.
 You are having a conversation with a developer. Use the history to provide coherent follow-up answers.
 Answer using ONLY the code context provided below.
 Be specific: reference exact functions, classes, and files. Markdown is allowed.
+When your answer draws directly from a specific chunk, place a compact inline citation [N] \
+right after the relevant phrase (N = the chunk number from the context). \
+Use citations sparingly — only when they pinpoint an exact function, class, or code block.
 
 ---
 CONVERSATION HISTORY:
@@ -357,6 +176,75 @@ CODE CONTEXT:
 """
 
 
+# ─── Public API ───────────────────────────────────────────────────────────────
+
+async def answer_question(
+    client: AsyncQdrantClient,
+    question: str,
+    repository_id: str,
+    repo_name: str,
+    top_k: int = DEFAULT_TOP_K,
+) -> dict:
+    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
+    if not results:
+        return {
+            "answer": (
+                "I couldn't find relevant context for this question "
+                "in the indexed repository. Try rephrasing or ask about "
+                "a specific file or function."
+            ),
+            "sources": [],
+        }
+
+    context = _build_context(results)
+    prompt  = _QA_PROMPT.format(repo_name=repo_name, question=question, context=context)
+
+    raw = await _call_llm(prompt)
+    if raw is None:
+        return {"answer": "Unable to generate an answer at this time. Please try again.", "sources": []}
+
+    return {"answer": raw.get("answer", ""), "sources": _enrich_sources(raw.get("sources", []), results)}
+
+
+async def answer_with_history(
+    client: AsyncQdrantClient,
+    question: str,
+    repository_id: str,
+    repo_name: str,
+    history: List[dict],
+    top_k: int = DEFAULT_TOP_K,
+) -> dict:
+    results = await search(client, question, repository_id, top_k=top_k, rerank=True)
+    if not results:
+        return {
+            "answer": (
+                "I couldn't find relevant context for this question "
+                "in the indexed repository. Try rephrasing or ask about "
+                "a specific file or function."
+            ),
+            "sources": [],
+        }
+
+    context      = _build_context(results)
+    history_text = "\n".join(
+        f"{'Developer' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+        for m in history
+    ) if history else ""
+
+    prompt = _QA_PROMPT_WITH_HISTORY.format(
+        repo_name=repo_name,
+        history=history_text,
+        question=question,
+        context=context,
+    )
+
+    raw = await _call_llm(prompt)
+    if raw is None:
+        return {"answer": "Unable to generate an answer at this time. Please try again.", "sources": []}
+
+    return {"answer": raw.get("answer", ""), "sources": _enrich_sources(raw.get("sources", []), results)}
+
+
 async def stream_answer_question(
     client: AsyncQdrantClient,
     question: str,
@@ -364,64 +252,20 @@ async def stream_answer_question(
     repo_name: str,
     top_k: int = DEFAULT_TOP_K,
 ) -> AsyncGenerator[str, None]:
-    """Yield SSE-formatted strings for a streaming answer.
-
-    Protocol (each string is a complete SSE event ending with \\n\\n):
-      data: {"type": "sources", "sources": [...]}   — emitted first, before tokens
-      data: {"type": "token", "content": "..."}     — one event per streamed text chunk
-      data: {"type": "done"}                        — terminal event, always sent last
-    """
-    # 1. Retrieve relevant chunks (with LLM reranking for best precision)
     results = await search(client, question, repository_id, top_k=top_k, rerank=True)
-
     if not results:
-        no_ctx = {"type": "token", "content": (
-            "I couldn't find relevant context for this question in the indexed "
-            "repository. Try rephrasing or ask about a specific file or function."
-        )}
-        yield f"data: {json.dumps(no_ctx)}\n\n"
+        _no_ctx = "I couldn't find relevant context for this question in the indexed repository. Try rephrasing or ask about a specific file or function."
+        yield f'data: {json.dumps({"type": "token", "content": _no_ctx})}\n\n'
         yield 'data: {"type": "done"}\n\n'
         return
 
-    # 2. Emit sources immediately so the UI can render them while tokens arrive
-    sources_payload = [
-        {
-            "file_path":     r.file_path,
-            "function_name": r.function_name,
-            "class_name":    r.class_name,
-            "line_start":    r.line_start,
-            "line_end":      r.line_end,
-            "chunk_type":    r.chunk_type,
-            "chunk_preview": r.chunk_preview,
-        }
-        for r in results
-    ]
-    yield f'data: {json.dumps({"type": "sources", "sources": sources_payload})}\n\n'
+    yield f'data: {json.dumps({"type": "sources", "sources": _sources_payload(results)})}\n\n'
 
-    # 3. Stream Gemini answer tokens
-    context = _build_context(results)
     prompt = _QA_STREAM_PROMPT.format(
-        repo_name=repo_name,
-        question=question,
-        context=context,
+        repo_name=repo_name, question=question, context=_build_context(results)
     )
-
-    gemini_client = _get_gemini_client()
-    try:
-        async for chunk in gemini_client.aio.models.generate_content_stream(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=0.1,
-                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
-            ),
-        ):
-            text = chunk.text
-            if text:
-                yield f'data: {json.dumps({"type": "token", "content": text})}\n\n'
-    except Exception as exc:
-        log.warning("Gemini streaming failed: %s", exc)
-        yield f'data: {json.dumps({"type": "token", "content": chr(10) + chr(10) + "*Unable to complete the answer. Please try again.*"})}\n\n'
+    async for evt in _stream_tokens(prompt):
+        yield evt
 
     yield 'data: {"type": "done"}\n\n'
 
@@ -434,25 +278,172 @@ async def stream_answer_with_history(
     history: List[dict],
     top_k: int = DEFAULT_TOP_K,
 ) -> AsyncGenerator[str, None]:
-    """Stream a history-aware answer as SSE.
-
-    Same protocol as stream_answer_question:
-      data: {"type": "sources", "sources": [...]}
-      data: {"type": "token", "content": "..."}
-      data: {"type": "done"}
-    """
     results = await search(client, question, repository_id, top_k=top_k, rerank=True)
-
     if not results:
-        no_ctx = {"type": "token", "content": (
-            "I couldn't find relevant context for this question in the indexed "
-            "repository. Try rephrasing or ask about a specific file or function."
-        )}
-        yield f"data: {json.dumps(no_ctx)}\n\n"
+        _no_ctx = "I couldn't find relevant context for this question in the indexed repository. Try rephrasing or ask about a specific file or function."
+        yield f'data: {json.dumps({"type": "token", "content": _no_ctx})}\n\n'
         yield 'data: {"type": "done"}\n\n'
         return
 
-    sources_payload = [
+    yield f'data: {json.dumps({"type": "sources", "sources": _sources_payload(results)})}\n\n'
+
+    context = _build_context(results)
+    if history:
+        history_text = "\n".join(
+            f"{'Developer' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in history
+        )
+        prompt = _QA_STREAM_PROMPT_WITH_HISTORY.format(
+            repo_name=repo_name, history=history_text, question=question, context=context
+        )
+    else:
+        prompt = _QA_STREAM_PROMPT.format(
+            repo_name=repo_name, question=question, context=context
+        )
+
+    async for evt in _stream_tokens(prompt):
+        yield evt
+
+    yield 'data: {"type": "done"}\n\n'
+
+
+# ─── LLM dispatch ─────────────────────────────────────────────────────────────
+
+async def _call_llm(prompt: str) -> Optional[dict]:
+    """Non-streaming: Gemini primary, Groq fallback on any failure."""
+    result = await _call_gemini(prompt)
+    if result is not None:
+        return result
+
+    groq = _get_groq_client()
+    if groq:
+        log.info("Falling back to Groq for non-streaming Q&A")
+        return await _call_groq(groq, prompt)
+
+    return None
+
+
+async def _stream_tokens(prompt: str) -> AsyncGenerator[str, None]:
+    """Streaming: Gemini primary. On any Gemini failure, emit provider_switch then
+    continue from Groq. Emits generation_error if both providers fail."""
+    gemini_client = _get_gemini_client()
+
+    # ── Try Gemini ────────────────────────────────────────────────────────────
+    try:
+        stream = await gemini_client.aio.models.generate_content_stream(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(temperature=0.1),
+        )
+        async for chunk in stream:
+            text = chunk.text
+            if text:
+                yield f'data: {json.dumps({"type": "token", "content": text})}\n\n'
+        return  # Gemini succeeded — done
+    except Exception as exc:
+        exc_str = str(exc)
+        if '429' in exc_str or 'RESOURCE_EXHAUSTED' in exc_str:
+            delay = int(_parse_retry_delay(exc))
+            log.warning("Gemini streaming rate-limited (retry in %ds) — switching to Groq", delay)
+            switch_msg = f"Gemini quota reached — switched to Groq automatically"
+        else:
+            log.warning("Gemini streaming failed — switching to Groq: %s", exc)
+            switch_msg = "Gemini unavailable — switched to Groq automatically"
+
+        groq = _get_groq_client()
+        if groq is None:
+            # No Groq key configured — surface the original error
+            if '429' in exc_str or 'RESOURCE_EXHAUSTED' in exc_str:
+                delay = int(_parse_retry_delay(exc))
+                msg = f"*Rate limit reached — please wait ~{delay}s and try again.*"
+            else:
+                msg = "*Unable to complete the answer. Please try again.*"
+            yield f'data: {json.dumps({"type": "generation_error", "message": msg})}\n\n'
+            return
+
+        # Signal the provider switch so the UI can show a toast
+        yield f'data: {json.dumps({"type": "provider_switch", "provider": "groq", "message": switch_msg})}\n\n'
+
+    # ── Groq fallback ─────────────────────────────────────────────────────────
+    groq = _get_groq_client()
+    try:
+        stream = await groq.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            stream=True,
+        )
+        async for chunk in stream:
+            text = chunk.choices[0].delta.content or ""
+            if text:
+                yield f'data: {json.dumps({"type": "token", "content": text})}\n\n'
+    except Exception as exc:
+        log.warning("Groq streaming fallback also failed: %s", exc)
+        yield f'data: {json.dumps({"type": "generation_error", "message": "*Unable to complete the answer. Please try again.*"})}\n\n'
+
+
+# ─── Gemini ────────────────────────────────────────────────────────────────────
+
+def _parse_retry_delay(exc: Exception) -> float:
+    m = re.search(r'retry[^0-9]*(\d+(?:\.\d+)?)\s*s', str(exc), re.IGNORECASE)
+    return float(m.group(1)) if m else 5.0
+
+
+async def _call_gemini(prompt: str) -> Optional[dict]:
+    client = _get_gemini_client()
+    for attempt in range(1, 4):
+        try:
+            response = await client.aio.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
+            )
+            return _parse_json(response.text)
+        except Exception as exc:
+            exc_str = str(exc)
+            if '429' in exc_str or 'RESOURCE_EXHAUSTED' in exc_str:
+                delay = _parse_retry_delay(exc)
+                log.warning("Gemini Q&A rate-limited (attempt %d/3) — retrying in %.1fs", attempt, delay)
+                if attempt < 3:
+                    await asyncio.sleep(delay)
+            else:
+                log.warning("Gemini Q&A attempt %d/3 failed: %s", attempt, exc)
+    return None
+
+
+# ─── Groq ─────────────────────────────────────────────────────────────────────
+
+async def _call_groq(client: AsyncGroq, prompt: str) -> Optional[dict]:
+    try:
+        response = await client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
+        return _parse_json(response.choices[0].message.content)
+    except Exception as exc:
+        log.warning("Groq Q&A call failed: %s", exc)
+        return None
+
+
+# ─── Context / Source helpers ─────────────────────────────────────────────────
+
+def _build_context(results: List[SearchResult]) -> str:
+    parts = []
+    for i, r in enumerate(results, 1):
+        name   = r.function_name or r.class_name or "module"
+        loc    = f"L{r.line_start}-{r.line_end}" if r.line_start else ""
+        header = f"[{i}] {r.file_path} — {name}  {loc}"
+        parts.append(f"{header}\n```{r.language}\n{r.chunk_preview}\n```")
+    return "\n\n".join(parts)
+
+
+def _sources_payload(results: List[SearchResult]) -> list:
+    return [
         {
             "file_path":     r.file_path,
             "function_name": r.function_name,
@@ -464,45 +455,33 @@ async def stream_answer_with_history(
         }
         for r in results
     ]
-    yield f'data: {json.dumps({"type": "sources", "sources": sources_payload})}\n\n'
 
-    context = _build_context(results)
-    if history:
-        history_lines = [
-            f"{'Developer' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
-            for m in history
-        ]
-        prompt = _QA_STREAM_PROMPT_WITH_HISTORY.format(
-            repo_name=repo_name,
-            history="\n".join(history_lines),
-            question=question,
-            context=context,
-        )
-    else:
-        prompt = _QA_STREAM_PROMPT.format(
-            repo_name=repo_name,
-            question=question,
-            context=context,
-        )
 
-    gemini_client = _get_gemini_client()
-    try:
-        async for chunk in gemini_client.aio.models.generate_content_stream(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=0.1,
-                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
-            ),
-        ):
-            text = chunk.text
-            if text:
-                yield f'data: {json.dumps({"type": "token", "content": text})}\n\n'
-    except Exception as exc:
-        log.warning("Gemini streaming (history) failed: %s", exc)
-        yield f'data: {json.dumps({"type": "token", "content": chr(10) + chr(10) + "*Unable to complete the answer. Please try again.*"})}\n\n'
+def _enrich_sources(raw_sources: list, search_results: List[SearchResult]) -> List[dict]:
+    lookup: dict[str, SearchResult] = {}
+    for r in search_results:
+        key = f"{r.file_path}:{r.function_name or r.class_name or ''}"
+        lookup[key] = r
 
-    yield 'data: {"type": "done"}\n\n'
+    enriched, seen = [], set()
+    for source in raw_sources:
+        fp  = source.get("file_path", "")
+        fn  = source.get("function_name") or source.get("class_name") or ""
+        key = f"{fp}:{fn}"
+        if key in seen:
+            continue
+        seen.add(key)
+        matched = lookup.get(key)
+        enriched.append({
+            "file_path":     fp,
+            "function_name": source.get("function_name"),
+            "class_name":    source.get("class_name"),
+            "line_start":    source.get("line_start") or (matched.line_start if matched else None),
+            "line_end":      source.get("line_end")   or (matched.line_end   if matched else None),
+            "chunk_type":    matched.chunk_type    if matched else None,
+            "chunk_preview": matched.chunk_preview if matched else None,
+        })
+    return enriched
 
 
 def _parse_json(text: str) -> Optional[dict]:
@@ -511,9 +490,9 @@ def _parse_json(text: str) -> Optional[dict]:
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
-        text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
+        text  = "\n".join(lines[1:-1]) if len(lines) > 2 else text
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        log.warning("Could not parse Gemini JSON: %.200s", text)
+        log.warning("Could not parse LLM JSON: %.200s", text)
         return None

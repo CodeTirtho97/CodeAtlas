@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # APIs
     GOOGLE_API_KEY: str
+    GROQ_API_KEY: Optional[str] = None
     GITHUB_CLIENT_ID: str
     GITHUB_CLIENT_SECRET: str
 

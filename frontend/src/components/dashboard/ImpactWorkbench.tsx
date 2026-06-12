@@ -220,19 +220,20 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
             <p className="text-[10px] font-bold uppercase tracking-widest text-ink-subtle">Previous analyses</p>
             <span className="text-[10px] text-ink-subtle/50">· saved for 24h</span>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {history.map(h => {
               const rc = RISK_CONFIG[h.result.risk]
+              const shortName = h.symbol.split('/').pop() ?? h.symbol
               return (
                 <button
                   key={h.symbol + h.ts}
                   onClick={() => { setSymbol(h.symbol); setResult(h.result); setCheckedTests({}); setDepsExpanded('direct') }}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl border border-surface-border bg-surface-card hover:border-orange-500/30 hover:bg-orange-500/5 transition-all group"
+                  title={`${h.symbol} — ${rc.label}, ${h.result.total_impact} file${h.result.total_impact !== 1 ? 's' : ''} affected`}
+                  className="flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-lg border border-surface-border bg-surface-card hover:border-orange-500/30 hover:bg-orange-500/5 transition-all group"
                 >
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${rc.bar}`} />
-                  <code className="text-xs font-mono text-ink-muted group-hover:text-ink transition-colors">{h.symbol}</code>
-                  <span className={`text-[10px] font-bold ${rc.text}`}>{rc.label}</span>
-                  <span className="text-[10px] text-ink-subtle">{h.result.total_impact} files</span>
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${rc.bar}`} title={rc.label} />
+                  <code className="text-[11px] font-mono text-ink-muted group-hover:text-ink transition-colors">{shortName}</code>
+                  <span className="text-[10px] text-ink-subtle tabular-nums">{h.result.total_impact}</span>
                 </button>
               )
             })}

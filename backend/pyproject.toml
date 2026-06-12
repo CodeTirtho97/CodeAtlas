@@ -38,6 +38,7 @@ dependencies = [
 
     # LLM & Embeddings
     "google-genai>=2.7.0",
+    "groq>=0.13.0",
 
     # Utilities
     "python-dotenv>=1.0.0",

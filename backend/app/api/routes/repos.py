@@ -1,8 +1,10 @@
 import re
 import uuid
 from datetime import datetime
+from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
+from pydantic import BaseModel as PydanticModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -11,6 +13,7 @@ from app.core.database import get_session
 from app.models.db.repository import Repository
 from app.models.db.ingestion_job import IngestionJob
 from app.models.db.chunk import Chunk as ChunkModel
+from app.models.db.file import File as FileModel
 from app.models.db.user import User
 from app.models.schemas import (
     RepositoryListResponse,
@@ -237,6 +240,108 @@ async def get_repo(
     """Get single repository details including dashboard content."""
     repo = await _get_repo_or_404(session, repo_id, current_user.id)
     return _repo_to_response(repo)
+
+
+class CompositionBucket(PydanticModel):
+    name: str
+    count: int
+
+
+class RepositoryCompositionResponse(PydanticModel):
+    total_chunks: int
+    total_files: int
+    languages: List[CompositionBucket]
+    roles: List[CompositionBucket]
+    chunk_types: List[CompositionBucket]
+
+
+# Ingestion only names tier-1 languages (py/js/ts/java/go); everything else is
+# stored as "raw". Re-bucket those by file extension so the dashboard shows
+# "markdown / css / json" instead of a meaningless "raw" slice.
+_EXT_LANG_LABEL = {
+    ".md": "markdown", ".mdx": "markdown", ".rst": "markdown",
+    ".css": "css", ".scss": "css", ".sass": "css", ".less": "css",
+    ".html": "html", ".htm": "html", ".vue": "vue", ".svelte": "svelte",
+    ".json": "json", ".yml": "yaml", ".yaml": "yaml",
+    ".toml": "config", ".ini": "config", ".cfg": "config", ".conf": "config",
+    ".env": "config", ".properties": "config", ".lock": "config",
+    ".sql": "sql", ".graphql": "graphql", ".proto": "protobuf",
+    ".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ps1": "shell", ".bat": "shell",
+    ".xml": "xml", ".csv": "data", ".txt": "text",
+    ".rb": "ruby", ".php": "php", ".rs": "rust", ".c": "c", ".h": "c",
+    ".cpp": "c++", ".cc": "c++", ".hpp": "c++", ".cs": "c#",
+    ".kt": "kotlin", ".swift": "swift", ".scala": "scala", ".r": "r",
+    ".dart": "dart", ".lua": "lua", ".ex": "elixir", ".exs": "elixir",
+}
+_GENERIC_LANGS = {"raw", "unknown", "", "none"}
+
+
+def _language_label(language: str | None, file_path: str) -> str:
+    lang = (language or "").lower()
+    if lang not in _GENERIC_LANGS:
+        return lang
+    name = file_path.rsplit("/", 1)[-1].lower()
+    if name.startswith("dockerfile"):
+        return "docker"
+    if name in ("makefile", "cmakelists.txt", "rakefile"):
+        return "build"
+    ext = "." + name.rsplit(".", 1)[-1] if "." in name else ""
+    return _EXT_LANG_LABEL.get(ext, "other")
+
+
+@router.get("/{repo_id}/composition", response_model=RepositoryCompositionResponse)
+async def get_repo_composition(
+    repo_id: str,
+    current_user: User = Depends(get_current_user_dependency),
+    session: AsyncSession = Depends(get_session),
+) -> RepositoryCompositionResponse:
+    """Aggregate stored chunk metadata into a codebase composition breakdown.
+
+    Pure Postgres GROUP BYs over already-indexed data — no LLM or vector calls.
+    """
+    repo = await _get_repo_or_404(session, repo_id, current_user.id)
+
+    async def _bucket(column) -> List[CompositionBucket]:
+        result = await session.execute(
+            select(column, func.count(ChunkModel.id))
+            .where(ChunkModel.repository_id == repo.id)
+            .group_by(column)
+            .order_by(func.count(ChunkModel.id).desc())
+        )
+        return [
+            CompositionBucket(name=str(name), count=count)
+            for name, count in result.all()
+            if name  # skip NULL / empty buckets
+        ]
+
+    file_count_result = await session.execute(
+        select(func.count(FileModel.id)).where(FileModel.repository_id == repo.id)
+    )
+
+    # Languages need the file path to resolve generic "raw" chunks, so group by
+    # (language, path) — at most one row per file — then merge labels in Python.
+    lang_rows = await session.execute(
+        select(ChunkModel.language, FileModel.path, func.count(ChunkModel.id))
+        .join(FileModel, ChunkModel.file_id == FileModel.id)
+        .where(ChunkModel.repository_id == repo.id)
+        .group_by(ChunkModel.language, FileModel.path)
+    )
+    lang_counts: dict[str, int] = {}
+    for language, path, count in lang_rows.all():
+        label = _language_label(language, path)
+        lang_counts[label] = lang_counts.get(label, 0) + count
+    languages = [
+        CompositionBucket(name=name, count=count)
+        for name, count in sorted(lang_counts.items(), key=lambda x: x[1], reverse=True)
+    ]
+
+    return RepositoryCompositionResponse(
+        total_chunks=repo.chunk_count,
+        total_files=file_count_result.scalar() or 0,
+        languages=languages,
+        roles=await _bucket(ChunkModel.architectural_role),
+        chunk_types=await _bucket(ChunkModel.chunk_type),
+    )
 
 
 @router.delete("/{repo_id}", response_model=RepositoryDeleteResponse)
