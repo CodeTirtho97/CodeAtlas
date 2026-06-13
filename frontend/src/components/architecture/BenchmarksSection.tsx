@@ -18,6 +18,12 @@ export default function BenchmarksSection() {
             </div>
           ))}
         </div>
+
+        {/* Reproducibility note — plain text, no card. */}
+        {/* <p className="mt-5 text-[11px] text-ink-subtle">
+          <span className="font-semibold text-ink-muted">REP</span> : Regenerate the timings with{' '}
+          <code className="text-[10px] font-mono text-ink-muted">python -m benchmarks.run</code>. Hardware-dependent, so numbers vary.
+        </p> */}
       </div>
     </section>
   )

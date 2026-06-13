@@ -9,6 +9,7 @@ import Spinner from '../components/Spinner'
 import AppFooter from '../components/AppFooter'
 import AnalyzeForm from '../components/landing/AnalyzeForm'
 import RepoSection from '../components/landing/RepoSection'
+import HowItWorks from '../components/landing/HowItWorks'
 import FeaturesGrid from '../components/landing/FeaturesGrid'
 
 export default function LandingPage() {
@@ -112,6 +113,7 @@ export default function LandingPage() {
           <RepoSection repos={repos} loading={loadingRepos} onDelete={id => setRepos(p => p.filter(r => r.id !== id))} />
         )}
 
+        <HowItWorks />
         <FeaturesGrid />
       </main>
 

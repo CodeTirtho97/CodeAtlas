@@ -1,43 +1,30 @@
 const FEATURES = [
-  // ── Sidebar order: Overview → Understand → Explore → Ask AI → Impact Area → Evaluate ──
+  // ── Sidebar order: Understand → Explore → Ask AI → Impact → Evaluate ──
+  {
+    color: 'text-violet-400',
+    bg: 'bg-violet-500/8 border-violet-500/20',
+    iconBg: 'bg-violet-500/10',
+    icon: (
+      <svg className="w-4 h-4 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0118 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+      </svg>
+    ),
+    tab: 'Understand',
+    title: 'Repo Intelligence + Onboarding',
+    desc: 'Purpose, tech stack and entry points; a codebase-composition breakdown by language and architectural role; and an auto-generated learning path — all the moment ingestion completes.',
+  },
   {
     color: 'text-cyan-400',
     bg: 'bg-cyan-500/8 border-cyan-500/20',
     iconBg: 'bg-cyan-500/10',
     icon: (
       <svg className="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
-      </svg>
-    ),
-    tab: 'Overview',
-    title: 'Repo Intelligence Dashboard',
-    desc: 'At-a-glance stats — chunk count, endpoint count, tracked imports, entry points — plus purpose summary, stack chips, and architecture description.',
-  },
-  {
-    color: 'text-blue-400',
-    bg: 'bg-blue-500/8 border-blue-500/20',
-    iconBg: 'bg-blue-500/10',
-    icon: (
-      <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0118 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-      </svg>
-    ),
-    tab: 'Understand',
-    title: 'Auto Onboarding Guide',
-    desc: 'Prioritised reading path, key services, and core workflows — generated the moment ingestion completes.',
-  },
-  {
-    color: 'text-emerald-400',
-    bg: 'bg-emerald-500/8 border-emerald-500/20',
-    iconBg: 'bg-emerald-500/10',
-    icon: (
-      <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
       </svg>
     ),
     tab: 'Explore',
-    title: 'API Map + Dependency Graph',
-    desc: 'Every endpoint extracted via Tree-sitter. Dependency map rendered as an interactive cluster graph — click any node to focus its connections.',
+    title: 'Code Search · API Surface · System Map',
+    desc: 'Semantic code search (uses no question quota), the API surface grouped by resource, and an interactive dependency graph — click any node to focus its connections.',
   },
   {
     color: 'text-pink-400',
@@ -49,8 +36,8 @@ const FEATURES = [
       </svg>
     ),
     tab: 'Ask AI',
-    title: 'Architecture Q&A',
-    desc: 'Ask anything in plain English. Every answer cites the exact file, function, and line range it drew from — no hallucination, no guessing.',
+    title: 'Cited Architecture Q&A',
+    desc: 'Ask anything in plain English. Answers stream live with inline [N] citations to the exact file, function, and line range — inspectable in the Evidence panel.',
   },
   {
     color: 'text-amber-400',
@@ -66,17 +53,17 @@ const FEATURES = [
     desc: 'Type any function, class, or file. Get every file that transitively depends on it — so you know what will break before touching a single line.',
   },
   {
-    color: 'text-violet-400',
-    bg: 'bg-violet-500/8 border-violet-500/20',
-    iconBg: 'bg-violet-500/10',
+    color: 'text-emerald-400',
+    bg: 'bg-emerald-500/8 border-emerald-500/20',
+    iconBg: 'bg-emerald-500/10',
     icon: (
-      <svg className="w-4 h-4 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
       </svg>
     ),
     tab: 'Evaluate',
     title: 'AI Answer Quality Check',
-    desc: 'Runs a retrieval benchmark (Recall@5 + MRR) against auto-generated golden questions. Shows whether the AI is finding the right code — with a health grade.',
+    desc: 'Runs a retrieval benchmark (Recall@5 + MRR) against auto-generated golden questions, with a health grade and a dense/sparse/hybrid search-mode comparison.',
   },
 ]
 
@@ -85,14 +72,16 @@ export default function FeaturesUnlockedSection() {
     <section className="border-b border-surface-border">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-14">
         <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-subtle mb-2">What indexing unlocks</p>
-        <h2 className="text-xl font-bold text-ink mb-2">6 dashboard tabs, all powered by the pipeline</h2>
+        <h2 className="text-xl font-bold text-ink mb-2">5 dashboard tabs, all powered by the pipeline</h2>
         <p className="text-xs text-ink-muted mb-8 max-w-2xl">
           The ingestion pipeline runs once. Every tab below reads from the resulting vectors, dependency graph, and metadata — no re-processing per query.
         </p>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {/* Flex-wrap + centering so the 5th-card row (2 cards) centres under the
+            row of 3 above it, instead of sitting lopsided to the left. */}
+        <div className="flex flex-wrap justify-center gap-3">
           {FEATURES.map(f => (
-            <div key={f.tab} className={`rounded-2xl border p-5 flex flex-col gap-3 ${f.bg}`}>
+            <div key={f.tab} className={`w-full sm:w-[calc(50%-0.375rem)] lg:w-[calc(33.333%-0.5rem)] rounded-2xl border p-5 flex flex-col gap-3 ${f.bg}`}>
               <div className="flex items-center gap-2.5">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${f.iconBg}`}>
                   {f.icon}

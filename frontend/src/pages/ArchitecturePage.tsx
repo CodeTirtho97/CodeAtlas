@@ -20,7 +20,7 @@ export default function ArchitecturePage() {
               Under the hood
             </span>
             <h1 className="text-3xl sm:text-4xl font-bold text-ink mb-4 leading-tight tracking-tight">
-              How CodeAtlas Works
+              How CodeAtlas is Built
             </h1>
             <p className="text-ink-muted text-base max-w-2xl mx-auto leading-relaxed">
               CodeAtlas is a <strong className="text-ink font-semibold">Production RAG System</strong> built for source code —

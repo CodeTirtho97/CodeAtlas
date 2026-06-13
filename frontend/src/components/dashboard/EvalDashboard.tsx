@@ -5,6 +5,23 @@ import Spinner from '../Spinner'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+// Backend stores run timestamps as UTC but serializes them without a timezone
+// marker, so `new Date(str)` would treat them as local. Append 'Z' when there's
+// no marker so the value renders in the viewer's actual local timezone.
+const toLocalDate = (iso: string) =>
+  new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z')
+
+// Short timezone abbreviation for the viewer (e.g. "GMT+5:30", "PST").
+const tzAbbr = (d: Date) =>
+  new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+    .formatToParts(d).find(p => p.type === 'timeZoneName')?.value ?? ''
+
+// Local date+time with the timezone in brackets, e.g. "6/13/2026, 12:16 PM (GMT+5:30)".
+const fmtDateTime = (iso: string) => {
+  const d = toLocalDate(iso)
+  return `${d.toLocaleString()} (${tzAbbr(d)})`
+}
+
 // ─── Health grade ─────────────────────────────────────────────────────────────
 
 function getHealthGrade(recallPct: number): {
@@ -607,7 +624,7 @@ export default function EvalDashboard({ repoId, onAskAI }: { repoId: string; onA
   const prevPct = report?.previous ? Math.round(report.previous.recall_at_5 * 100) : null
   const deltaPts = recallPct !== null && prevPct !== null ? recallPct - prevPct : null
   const prevRanAt = report?.previous?.ran_at
-    ? new Date(report.previous.ran_at).toLocaleDateString()
+    ? toLocalDate(report.previous.ran_at).toLocaleDateString()
     : null
 
   const failedResults = report ? report.results.filter(r => !r.hit) : []
@@ -676,7 +693,7 @@ export default function EvalDashboard({ repoId, onAskAI }: { repoId: string; onA
             </p>
             {report?.ran_at && (
               <p className="text-[10px] text-ink-subtle mt-1.5">
-                Last run: {new Date(report.ran_at).toLocaleString()}
+                Last run: {fmtDateTime(report.ran_at)}
               </p>
             )}
           </div>

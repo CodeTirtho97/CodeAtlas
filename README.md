@@ -25,6 +25,7 @@ Instead of reading docs manually or asking teammates, CodeAtlas constructs a str
 - **Change Impact Analysis** — Type any function, class, or file to instantly see every file that depends on it
 - **Architecture-Aware Q&A** — Ask anything in plain English; every answer cites the exact file, function, and line range
 - **AI Answer Evaluation** — Run a retrieval benchmark (Recall@5 + MRR) to check how accurately the AI finds the right code
+- **Resilient LLM Layer** — Gemini 2.0 Flash primary with automatic Groq (Llama-3.3-70B) fallback on rate limits or errors, plus a seamless mid-stream provider switch
 - **Hybrid Search** — Dense vector + BM25 sparse search merged with manual Reciprocal Rank Fusion (k=60)
 - **Multi-Turn Chat** — Persistent sessions with full conversation history
 - **Multi-Language Support** — Full AST parsing for Python, JavaScript, TypeScript, Java, Go; fallback chunking for all others
@@ -42,7 +43,7 @@ Instead of reading docs manually or asking teammates, CodeAtlas constructs a str
 | Relational DB | PostgreSQL 16 |
 | Vector DB | Qdrant (dense + sparse; manual RRF fusion) |
 | Embeddings | gemini-embedding-001 (3072-dim) |
-| LLM | Gemini 2.0 Flash (Google AI Studio) |
+| LLM | Gemini 2.0 Flash (primary) + Groq Llama-3.3-70B (LLM reranker + automatic fallback) |
 | Code Parsing | Tree-sitter (AST-level semantic chunking) |
 | Dependency Analysis | NetworkX (directed import graph, hub detection) |
 | Containerisation | Docker + Docker Compose |
@@ -207,16 +208,15 @@ The ingestion pipeline runs in the background. A progress bar tracks each stage:
 
 ### 3. Explore the Dashboard
 
-Once complete, the dashboard provides six tabs:
+Once complete, the dashboard provides five tabs:
 
 | Tab | What it does |
 |---|---|
-| **Overview** | Purpose, tech stack, architecture description, entry points, and quick navigation |
-| **Understand** | Step-by-step onboarding guide — files to read first and core workflows |
-| **Explore** | All discovered API endpoints + interactive dependency map with cluster tabs |
-| **Ask AI** | Multi-turn chat with persistent history and cited answers |
-| **Impact Area** | Type any function, class, or file — see every file that depends on it |
-| **Evaluate** | Run a retrieval benchmark to check AI answer accuracy (Recall@5 + MRR) |
+| **Understand** | Repo identity (purpose, tech stack, entry points), a codebase-composition breakdown, and a step-by-step onboarding/learning path |
+| **Explore** | Semantic code search, the API surface grouped by resource, and an interactive dependency graph (System Map) |
+| **Ask AI** | Multi-turn chat with persistent history and answers cited to exact file/function/line |
+| **Impact** | Type any function, class, or file — see every file that depends on it, plus affected endpoints and tests to run |
+| **Evaluate** | Run a retrieval benchmark to check AI answer accuracy (Recall@5 + MRR), with a health grade and search-mode comparison |
 
 ### 4. Ask Questions
 
@@ -240,7 +240,7 @@ Sources:
 
 ### 5. Check Change Impact
 
-Go to the **Impact Area** tab and type any symbol or file path:
+Go to the **Impact** tab and type any symbol or file path:
 
 ```
 UserService
@@ -296,17 +296,21 @@ codeatlas/
 │   │       │   └── store.py               # Qdrant + PostgreSQL persistence
 │   │       ├── search/
 │   │       │   ├── retriever.py           # Hybrid search: 2× query_points + manual RRF
+│   │       │   ├── rerank.py              # LLM reranker (Groq primary → Gemini fallback)
 │   │       │   └── sparse.py              # BM25-like feature-hash tokenizer
 │   │       ├── generation/
-│   │       │   ├── qa.py                  # LLM Q&A with context + chat history
+│   │       │   ├── qa.py                  # LLM Q&A (Gemini → Groq fallback)
 │   │       │   ├── summarizer.py          # Purpose, stack, architecture summary
-│   │       │   └── onboarding.py          # Step-by-step learning guide
+│   │       │   ├── onboarding.py          # Step-by-step learning guide
+│   │       │   └── llm_json.py            # Shared sync Gemini→Groq JSON generation
 │   │       ├── analysis/
 │   │       │   ├── api_extractor.py       # HTTP endpoint discovery (Tree-sitter)
 │   │       │   ├── dependency_graph.py    # Import graph via NetworkX
 │   │       │   └── impact.py             # Transitive dependency impact analysis
 │   │       └── evaluation/
-│   │           └── retrieval_eval.py      # Recall@5 + MRR benchmark runner
+│   │           ├── retrieval_eval.py      # Recall@5 + MRR + ablation + citation
+│   │           └── progress.py            # In-memory eval-run progress registry
+│   ├── benchmarks/                        # Reproducible parser/sparse micro-benchmarks
 │   ├── alembic/                           # DB migration scripts
 │   ├── pyproject.toml
 │   ├── Dockerfile
@@ -325,24 +329,27 @@ codeatlas/
 │   │   ├── pages/
 │   │   │   ├── LandingPage.tsx
 │   │   │   ├── CallbackPage.tsx
-│   │   │   ├── DashboardPage.tsx          # 6-tab repository dashboard
+│   │   │   ├── DashboardPage.tsx          # 5-tab repository dashboard
 │   │   │   ├── IngestionPage.tsx          # Real-time ingestion progress
 │   │   │   └── ArchitecturePage.tsx
 │   │   └── components/
 │   │       ├── Header.tsx
 │   │       ├── AppFooter.tsx
+│   │       ├── TechIcon.tsx               # Iconify brand logos for tech chips
 │   │       ├── dashboard/
-│   │       │   ├── OverviewPanel.tsx
-│   │       │   ├── UnderstandPanel.tsx
-│   │       │   ├── ExplorePanel.tsx       # API map + dependency graph
+│   │       │   ├── UnderstandPanel.tsx    # Repo identity, composition, learning path
+│   │       │   ├── ExplorePanel.tsx       # Code search + API surface + System Map
 │   │       │   ├── DependencyGraph.tsx    # React Flow + dagre cluster graph
 │   │       │   ├── AskAIWorkspace.tsx
 │   │       │   ├── ImpactWorkbench.tsx    # Change impact analysis UI
-│   │       │   └── EvalDashboard.tsx      # Retrieval evaluation UI
+│   │       │   ├── EvalDashboard.tsx      # Retrieval evaluation UI
+│   │       │   ├── Sidebar.tsx            # Tab navigation rail
+│   │       │   └── nav.tsx                # Shared tab metadata
 │   │       ├── landing/
 │   │       │   ├── AnalyzeForm.tsx
 │   │       │   ├── RepoCard.tsx
 │   │       │   ├── RepoSection.tsx
+│   │       │   ├── HowItWorks.tsx         # 3-step "how it works" + tab guide
 │   │       │   └── FeaturesGrid.tsx
 │   │       └── architecture/
 │   │           ├── PipelineSection.tsx
@@ -442,8 +449,10 @@ Interactive docs: **http://localhost:8000/api/docs** (Swagger UI)
 |---|---|---|
 | `GET` | `/repos` | List user's repositories |
 | `GET` | `/repos/{id}` | Get repository details + dashboard data |
+| `GET` | `/repos/{id}/composition` | Codebase composition (languages, roles, chunk types) |
 | `POST` | `/repos/ingest` | Submit repository for ingestion |
 | `GET` | `/repos/ingest/{job_id}/status` | Poll ingestion progress |
+| `POST` | `/repos/ingest/{job_id}/cancel` | Cancel an in-flight ingestion |
 | `DELETE` | `/repos/{id}` | Delete repository + vectors |
 
 ### Chat
@@ -456,12 +465,15 @@ Interactive docs: **http://localhost:8000/api/docs** (Swagger UI)
 | `POST` | `/chat/sessions/{id}/ask` | Ask a question in a session |
 | `DELETE` | `/chat/sessions/{id}` | Delete a chat session |
 
-### Analysis
+### Search & Analysis
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/impact/{repo_id}` | Run change impact analysis for a symbol or file |
-| `POST` | `/eval/{repo_id}` | Run retrieval evaluation (Recall@5 + MRR) |
+| `POST` | `/query/search` | Semantic code search (retrieval only, no LLM quota used) |
+| `POST` | `/repos/{id}/impact` | Run change impact analysis for a symbol or file |
+| `POST` | `/repos/{id}/eval/run` | Launch a retrieval evaluation in the background (Recall@5 + MRR) |
+| `GET` | `/repos/{id}/eval/status` | Poll a running evaluation's progress |
+| `GET` | `/repos/{id}/eval/result` | Fetch the last cached evaluation result |
 
 ---
 
@@ -475,6 +487,7 @@ Interactive docs: **http://localhost:8000/api/docs** (Swagger UI)
 | `QDRANT_URL` | Yes | Qdrant server URL |
 | `QDRANT_API_KEY` | No | Qdrant Cloud API key (leave blank for local) |
 | `GOOGLE_API_KEY` | Yes | Google AI Studio key (Gemini + gemini-embedding-001) |
+| `GROQ_API_KEY` | No | Groq key — enables the LLM reranker and automatic Gemini→Groq fallback |
 | `GITHUB_CLIENT_ID` | Yes | GitHub OAuth App Client ID |
 | `GITHUB_CLIENT_SECRET` | Yes | GitHub OAuth App Client Secret |
 | `JWT_SECRET` | Yes | Random secret for signing JWTs (min 32 chars) |
@@ -518,12 +531,12 @@ Hybrid dense+sparse search with manual RRF fusion (k=60), multi-turn chat with p
 Interactive dependency graph with cluster tabs (React Flow + dagre), change impact analysis, AI answer quality evaluation (Recall@5 + MRR)
 
 ### Phase 5 — Full Frontend ✅
-6-tab dashboard (Overview, Understand, Explore, Ask AI, Impact Area, Evaluate), real-time ingestion progress, chat interface with session history, repository management
+5-tab dashboard (Understand, Explore, Ask AI, Impact, Evaluate), real-time ingestion progress, chat interface with session history, repository management
 
-### Phase 6 — Deployment ⏳ Planned
-- Vercel (frontend)
-- Railway (backend)
-- Neon (PostgreSQL)
+### Phase 6 — Deployment ✅
+- Vercel (frontend) — https://code-atlas-five.vercel.app/
+- Render (backend) — https://codeatlas-tg4h.onrender.com/
+- Managed PostgreSQL
 - Qdrant Cloud
 
 ### V2 — Future

@@ -26,7 +26,7 @@ cp .env.example .env   # then fill in values
 | `DATABASE_URL` | `postgresql+asyncpg://user:pass@localhost:5432/codeatlas` |
 | `QDRANT_URL` | `http://localhost:6333` |
 | `GOOGLE_API_KEY` | Google AI Studio key — used for embeddings (`gemini-embedding-001`) and Gemini LLM |
-| `GROQ_API_KEY` | Groq Cloud key — primary LLM for Q&A and reranking; Gemini is fallback when this is set |
+| `GROQ_API_KEY` | Groq Cloud key — primary LLM *reranker*, and the automatic *fallback* for Q&A generation when Gemini errors or hits quota |
 | `GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth app secret |
 | `JWT_SECRET` | Random secret ≥ 32 chars |
@@ -34,7 +34,7 @@ cp .env.example .env   # then fill in values
 
 Optional: `QDRANT_API_KEY` (Qdrant Cloud only), `LOG_LEVEL` (default: `INFO`).
 
-**LLM provider precedence:** if `GROQ_API_KEY` is set, Groq (`llama-3.3-70b-versatile`) is used for Q&A generation and reranking. On Groq 429 / any error, the backend automatically falls back to Gemini 2.0 Flash and emits a `provider_switch` SSE event so the frontend can notify the user. When Gemini quota is exhausted first, Groq is the fallback in the same way.
+**LLM provider precedence:** Reranking is Groq-first (`llama-3.3-70b-versatile`) → Gemini fallback. Q&A generation is the reverse — **Gemini 2.0 Flash primary → Groq fallback**: on a Gemini 429 / error, the backend automatically switches to Groq (when `GROQ_API_KEY` is set) and emits a `provider_switch` SSE event so the frontend can notify the user. (The eval citation pass forces Groq-first to sidestep Gemini's rate-limit backoff.)
 
 ---
 
@@ -115,14 +115,17 @@ backend/
 │       │   ├── qa.py                  # Gemini 2.0 Flash primary → Groq fallback on quota/error
 │       │   │                          # stream_answer_with_history(): SSE async generator
 │       │   │                          # emits provider_switch event when provider changes
-│       │   ├── summarizer.py          # repo summary (one Gemini call at ingestion)
-│       │   └── onboarding.py          # onboarding guide (one Gemini call at ingestion)
+│       │   ├── summarizer.py          # repo summary (Gemini 2.0 → Groq fallback)
+│       │   ├── onboarding.py          # onboarding guide (Gemini 2.0 → Groq fallback)
+│       │   └── llm_json.py            # shared sync Gemini→Groq JSON generation helper
 │       ├── analysis/
 │       │   ├── api_extractor.py       # Tree-sitter route/decorator extraction
 │       │   ├── dependency_graph.py    # NetworkX import graph → adjacency JSON
-│       │   └── impact.py              # change-impact: transitive dep walk + risk scoring
+│       │   └── impact.py              # change-impact: transitive dep walk + risk scoring + summary
 │       └── evaluation/
-│           └── retrieval_eval.py      # Recall@5, MRR, ablation (HYBRID/DENSE/SPARSE), citation precision
+│           ├── retrieval_eval.py      # Recall@5, MRR, ablation (HYBRID/DENSE/SPARSE), citation precision
+│           └── progress.py            # in-memory eval-run progress registry (polled by the UI)
+├── benchmarks/                        # reproducible parser/sparse micro-benchmarks (python -m benchmarks.run)
 ├── tests/
 │   └── unit/                          # pytest unit tests (no external services)
 ├── alembic/                           # DB migrations
@@ -144,20 +147,24 @@ backend/
 | `GET` | `/auth/me` | Current user info |
 | `POST` | `/repos/ingest` | Submit repo for ingestion |
 | `GET` | `/repos/ingest/{job_id}/status` | Poll ingestion progress |
+| `POST` | `/repos/ingest/{job_id}/cancel` | Cancel an in-flight ingestion |
 | `GET` | `/repos` | List user's repos |
 | `GET` | `/repos/{repo_id}` | Repo detail (summary, onboarding, endpoints, deps) |
+| `GET` | `/repos/{repo_id}/composition` | Codebase composition (languages, roles, chunk types) |
 | `DELETE` | `/repos/{repo_id}` | Delete repo from Qdrant + DB |
 | `POST` | `/query` | One-shot Q&A with citations |
 | `POST` | `/query/stream` | Streaming Q&A (SSE) |
+| `POST` | `/query/search` | Semantic code search (retrieval only, no LLM) |
 | `GET` | `/chat/sessions` | List chat sessions for a repo |
 | `POST` | `/chat/sessions` | Create chat session |
 | `DELETE` | `/chat/sessions/{id}` | Delete session |
 | `GET` | `/chat/sessions/{id}/messages` | Get session messages |
 | `POST` | `/chat/sessions/{id}/ask` | Ask in session (blocking) |
 | `POST` | `/chat/sessions/{id}/stream` | Ask in session (SSE streaming) |
-| `POST` | `/impact` | Change-impact analysis for a symbol/function |
-| `POST` | `/eval/run` | Run RAG evaluation |
-| `GET` | `/eval/result/{repo_id}` | Get cached eval report |
+| `POST` | `/repos/{repo_id}/impact` | Change-impact analysis for a symbol/function |
+| `POST` | `/repos/{repo_id}/eval/run` | Launch RAG evaluation in the background |
+| `GET` | `/repos/{repo_id}/eval/status` | Poll a running evaluation's progress |
+| `GET` | `/repos/{repo_id}/eval/result` | Get cached eval report |
 | `GET` | `/health` | Service health check |
 
 ---

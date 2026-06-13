@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { reposApi } from '../../api/repos'
-import type { ImpactResult, RiskLevel } from '../../types'
+import type { ImpactResult, RiskLevel, Repository } from '../../types'
 import Spinner from '../Spinner'
 import { methodStyle } from './shared'
 
@@ -73,13 +73,27 @@ const RISK_CONFIG: Record<RiskLevel, {
   },
 }
 
+// Stronger per-risk tint for the small history chips (RISK_CONFIG.bg is only /8,
+// which is invisible at chip size). Literal classes so Tailwind generates them.
+const CHIP_TINT: Record<RiskLevel, string> = {
+  high:   'bg-red-500/20',
+  medium: 'bg-amber-500/20',
+  low:    'bg-emerald-500/20',
+}
+
 // ─── Impact stat chip ─────────────────────────────────────────────────────────
 
-function ImpactStat({ label, value, accent }: { label: string; value: number; accent: string }) {
+function ImpactStat({ label, value, accent, border, desc }: {
+  label: string; value: number; accent: string; border: string; desc: string
+}) {
+  const active = value > 0
   return (
-    <div className="flex flex-col items-center gap-1 px-4 py-3 rounded-xl bg-surface-raised border border-surface-border min-w-[72px]">
-      <span className={`text-xl font-bold leading-none ${value > 0 ? accent : 'text-ink-subtle'}`}>{value}</span>
-      <span className="text-[10px] text-ink-subtle font-medium text-center leading-tight">{label}</span>
+    <div className={`rounded-xl bg-surface-raised border p-3.5 flex flex-col h-full transition-colors ${border}`}>
+      <span className={`text-2xl font-bold leading-none tabular-nums ${active ? accent : 'text-gray-500'}`}>
+        {value}
+      </span>
+      <p className="text-[11px] font-semibold text-gray-200 mt-2">{label}</p>
+      <p className="text-[10px] text-gray-400 leading-snug mt-1">{desc}</p>
     </div>
   )
 }
@@ -118,15 +132,21 @@ interface Props {
   repoId:         string
   onAskAI?:       (question: string) => void
   defaultSymbol?: string
+  repo?:          Repository
 }
 
-export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Props) {
+// Generic fallback when the repo has no dependency graph (rare).
+const GENERIC_EXAMPLES = ['authenticate_user', 'AuthService', 'validateToken', 'UserModel']
+
+export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol, repo }: Props) {
   const [symbol, setSymbol] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ImpactResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [checkedTests, setCheckedTests] = useState<Record<string, boolean>>({})
-  const [depsExpanded, setDepsExpanded] = useState<'direct' | 'transitive' | null>('direct')
+  // Independent toggles — both sections can be open at once (default open).
+  const [directOpen, setDirectOpen] = useState(true)
+  const [transitiveOpen, setTransitiveOpen] = useState(true)
   const [history, setHistory] = useState<CachedAnalysis[]>(() => loadCache(repoId))
 
   // Pre-fill input when navigated from graph/explore — user analyzes manually
@@ -145,7 +165,8 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
     setResult(null)
     setError(null)
     setCheckedTests({})
-    setDepsExpanded('direct')
+    setDirectOpen(true)
+    setTransitiveOpen(true)
     try {
       const data = await reposApi.analyzeImpact(repoId, sym)
       setResult(data)
@@ -166,6 +187,22 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
   const rc = result ? RISK_CONFIG[result.risk] : null
   const checkedCount = Object.values(checkedTests).filter(Boolean).length
   const preFilled = !!defaultSymbol && !!symbol && !result && !loading
+
+  // Suggest the repo's most depended-on files — changing those has the biggest
+  // blast radius, so they're the most instructive (and they actually exist here,
+  // unlike generic examples). Falls back to generic names only if no graph.
+  const suggestions = useMemo<string[]>(() => {
+    const deps = repo?.dependencies
+    if (deps && Object.keys(deps).length > 0) {
+      return Object.entries(deps)
+        .sort((a, b) => (b[1].used_by?.length ?? 0) - (a[1].used_by?.length ?? 0))
+        .filter(([, d]) => (d.used_by?.length ?? 0) > 0)
+        .slice(0, 6)
+        .map(([path]) => path)
+    }
+    return GENERIC_EXAMPLES
+  }, [repo])
+  const suggestionsAreReal = !!repo?.dependencies && suggestions !== GENERIC_EXAMPLES
 
   return (
     <div className="space-y-6 pb-10">
@@ -227,13 +264,12 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
               return (
                 <button
                   key={h.symbol + h.ts}
-                  onClick={() => { setSymbol(h.symbol); setResult(h.result); setCheckedTests({}); setDepsExpanded('direct') }}
+                  onClick={() => { setSymbol(h.symbol); setResult(h.result); setCheckedTests({}); setDirectOpen(true); setTransitiveOpen(true) }}
                   title={`${h.symbol}: ${rc.label}, ${h.result.total_impact} file${h.result.total_impact !== 1 ? 's' : ''} affected`}
-                  className="flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-lg border border-surface-border bg-surface-card hover:border-orange-500/30 hover:bg-orange-500/5 transition-all group"
+                  className={`flex items-center gap-2 px-2.5 py-1 rounded-lg border transition-all group hover:brightness-125 ${rc.border} ${CHIP_TINT[h.result.risk]}`}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${rc.bar}`} title={rc.label} />
-                  <code className="text-[11px] font-mono text-ink-muted group-hover:text-ink transition-colors">{shortName}</code>
-                  <span className="text-[10px] text-ink-subtle tabular-nums">{h.result.total_impact}</span>
+                  <code className="text-[11px] font-mono text-gray-300 group-hover:text-white transition-colors">{shortName}</code>
+                  <span className="text-[10px] text-gray-500 tabular-nums">{h.result.total_impact}</span>
                 </button>
               )
             })}
@@ -301,32 +337,34 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
             </div>
           )}
 
-          {/* Example searches — only for first-time users with no pre-fill */}
-          {history.length === 0 && !preFilled && <div className="rounded-2xl border border-surface-border bg-surface-card p-5">
-            <p className="text-xs font-bold uppercase tracking-widest text-ink-subtle mb-3">Try an example</p>
-            <div className="flex flex-wrap gap-2">
-              {[
-                'authenticate_user',
-                'AuthService',
-                'routes/auth.py',
-                'validateToken',
-                'database.py',
-                'UserModel',
-              ].map(example => (
-                <button
-                  key={example}
-                  onClick={() => setSymbol(example)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-border bg-surface-raised hover:border-orange-500/40 hover:bg-orange-500/5 text-xs font-mono text-ink-muted hover:text-orange-300 transition-all"
-                >
-                  <svg className="w-3 h-3 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-                  </svg>
-                  {example}
-                </button>
-              ))}
+          {/* Suggestions — repo's highest-impact files (real, guaranteed to exist) */}
+          {history.length === 0 && !preFilled && (
+            <div className="rounded-2xl border border-surface-border bg-surface-card p-5">
+              <p className="text-xs font-bold uppercase tracking-widest text-ink-subtle mb-3">
+                {suggestionsAreReal ? 'High-impact files to try' : 'Try an example'}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {suggestions.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setSymbol(s)}
+                    title={s}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-border bg-surface-raised hover:border-orange-500/40 hover:bg-orange-500/5 text-xs font-mono text-ink-muted hover:text-orange-300 transition-all"
+                  >
+                    <svg className="w-3 h-3 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                    </svg>
+                    {suggestionsAreReal ? (s.split('/').pop() || s) : s}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-ink-subtle mt-3">
+                {suggestionsAreReal
+                  ? 'These are the most depended-on files in this repo, so changing them ripples the furthest. Click one, then Analyze.'
+                  : 'Click any example to prefill the search, then hit Analyze.'}
+              </p>
             </div>
-            <p className="text-[10px] text-ink-subtle mt-3">Click any example to prefill the search, then hit Analyze.</p>
-          </div>}
+          )}
         </div>
       )}
 
@@ -378,12 +416,12 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
           </div>
 
           {/* ── Impact stats ── */}
-          <div className="flex flex-wrap gap-2">
-            <ImpactStat label="Total files" value={result.total_impact} accent="text-orange-400" />
-            <ImpactStat label="Direct" value={result.direct_dependents.length} accent="text-red-400" />
-            <ImpactStat label="Transitive" value={result.transitive_dependents.length} accent="text-amber-400" />
-            <ImpactStat label="Endpoints" value={result.affected_endpoints.length} accent="text-blue-400" />
-            <ImpactStat label="Tests" value={result.tests_to_run.length} accent="text-violet-400" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+            <ImpactStat label="Total files" value={result.total_impact} accent="text-orange-400" border="border-orange-500/40" desc="Everything in the blast radius" />
+            <ImpactStat label="Direct" value={result.direct_dependents.length} accent="text-red-400" border="border-red-500/40" desc="Files that import it directly" />
+            <ImpactStat label="Transitive" value={result.transitive_dependents.length} accent="text-amber-400" border="border-amber-500/40" desc="Reached further down the chain" />
+            <ImpactStat label="Endpoints" value={result.affected_endpoints.length} accent="text-blue-400" border="border-blue-500/40" desc="API routes that get exercised" />
+            <ImpactStat label="Tests" value={result.tests_to_run.length} accent="text-violet-400" border="border-violet-500/40" desc="Test files in the impact set" />
           </div>
 
           {/* ── Dependency chain + Surfaces ── */}
@@ -393,13 +431,13 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
             <div className="rounded-2xl border border-surface-border bg-surface-card overflow-hidden">
               <div className="px-5 py-3.5 border-b border-surface-border bg-surface-raised/50">
                 <p className="text-xs font-semibold text-ink">Dependency Chain</p>
-                <p className="text-[10px] text-ink-muted mt-0.5">Files that break if this symbol changes</p>
+                <p className="text-[10px] text-ink-muted mt-0.5">What depends on this: direct dependents, then everything they cascade to</p>
               </div>
 
               {/* Direct */}
               <div>
                 <button
-                  onClick={() => setDepsExpanded(prev => prev === 'direct' ? null : 'direct')}
+                  onClick={() => setDirectOpen(v => !v)}
                   className="w-full flex items-center justify-between px-5 py-3 hover:bg-surface-raised/30 transition-colors"
                 >
                   <div className="flex items-center gap-2">
@@ -407,11 +445,11 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
                     <span className="text-xs font-semibold text-ink">Direct dependents</span>
                     <span className="text-[10px] text-red-400 font-bold">{result.direct_dependents.length}</span>
                   </div>
-                  <svg className={`w-3.5 h-3.5 text-ink-subtle transition-transform ${depsExpanded === 'direct' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <svg className={`w-3.5 h-3.5 text-ink-subtle transition-transform ${directOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
-                {depsExpanded === 'direct' && (
+                {directOpen && (
                   <div className="px-5 pb-3 border-b border-surface-border/50">
                     {result.direct_dependents.length === 0 ? (
                       <p className="text-xs text-ink-subtle italic py-2">No direct dependents found.</p>
@@ -441,7 +479,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
               {/* Transitive */}
               <div>
                 <button
-                  onClick={() => setDepsExpanded(prev => prev === 'transitive' ? null : 'transitive')}
+                  onClick={() => setTransitiveOpen(v => !v)}
                   className="w-full flex items-center justify-between px-5 py-3 hover:bg-surface-raised/30 transition-colors"
                 >
                   <div className="flex items-center gap-2">
@@ -449,11 +487,11 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
                     <span className="text-xs font-semibold text-ink">Transitive dependents</span>
                     <span className="text-[10px] text-amber-400 font-bold">{result.transitive_dependents.length}</span>
                   </div>
-                  <svg className={`w-3.5 h-3.5 text-ink-subtle transition-transform ${depsExpanded === 'transitive' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <svg className={`w-3.5 h-3.5 text-ink-subtle transition-transform ${transitiveOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
-                {depsExpanded === 'transitive' && (
+                {transitiveOpen && (
                   <div className="px-5 pb-3">
                     {result.transitive_dependents.length === 0 ? (
                       <p className="text-xs text-ink-subtle italic py-2">No transitive dependents found.</p>
@@ -481,26 +519,25 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
                     API Endpoints Touched
                     <span className="ml-2 text-[10px] text-blue-400 font-bold">{result.affected_endpoints.length}</span>
                   </p>
-                  <p className="text-[10px] text-ink-muted mt-0.5">Routes that will need testing or review</p>
+                  <p className="text-[10px] text-ink-muted mt-0.5">HTTP routes served by the affected files. Retest these before shipping.</p>
                 </div>
                 <div className="p-3">
                   {result.affected_endpoints.length === 0 ? (
                     <p className="text-xs text-ink-subtle italic text-center py-4">No API endpoints affected.</p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                       {result.affected_endpoints.map((ep, i) => (
-                        <div key={i} className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-surface-raised/50 border border-surface-border/50 group hover:border-blue-500/30 transition-colors">
-                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded border shrink-0 ${methodStyle(ep.method)}`}>
+                        <div
+                          key={i}
+                          title={`${ep.method ?? ''} ${ep.path ?? ep.file_path}${ep.function_name ? ` · ${ep.function_name}` : ''}`}
+                          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-surface-raised/40 border border-surface-border/40 hover:border-blue-500/30 transition-colors"
+                        >
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 w-14 text-center ${methodStyle(ep.method)}`}>
                             {ep.method ?? '?'}
                           </span>
-                          <code className="text-xs font-mono text-ink flex-1 min-w-0 truncate">
+                          <code className="text-[11px] font-mono text-ink-muted min-w-0 truncate">
                             {ep.path ?? ep.file_path}
                           </code>
-                          {ep.function_name && (
-                            <span className="text-[10px] text-ink-subtle font-mono shrink-0 hidden group-hover:block">
-                              {ep.function_name}
-                            </span>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -516,7 +553,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
                       Tests to Run
                       <span className="ml-2 text-[10px] text-violet-400 font-bold">{result.tests_to_run.length}</span>
                     </p>
-                    <p className="text-[10px] text-ink-muted mt-0.5">Check off as you verify each test passes</p>
+                    <p className="text-[10px] text-ink-muted mt-0.5">Test files covering the affected code. Check each off as it passes.</p>
                   </div>
                   {result.tests_to_run.length > 0 && (
                     <span className="text-[10px] text-ink-subtle font-medium">

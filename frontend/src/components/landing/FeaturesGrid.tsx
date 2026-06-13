@@ -81,7 +81,7 @@ const FEATURES = [
     ),
     tag: 'Retrieval eval',
     title: 'AI Answer Quality Check',
-    desc: 'Auto-runs on first visit. See how accurately the AI retrieves the right code — with a health grade, so you know when to trust answers and when to dig deeper.',
+    desc: 'Run a one-click retrieval benchmark (Recall@5 + MRR) against auto-generated questions and get a plain-English health grade — so you know when to trust answers and when to dig deeper.',
   },
 ]
 

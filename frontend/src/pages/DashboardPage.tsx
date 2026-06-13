@@ -153,7 +153,7 @@ export default function DashboardPage() {
 
                 {activeTab === 'understand' && <UnderstandPanel repo={repo} onAskAI={handleAskAI} onCheckImpact={handleCheckImpact} onNavigate={setActiveTab} />}
                 {activeTab === 'explore'    && <ExplorePanel repo={repo} onAskAI={handleAskAI} onCheckImpact={handleCheckImpact} />}
-                {activeTab === 'change'     && repoId && <ImpactWorkbench repoId={repoId} onAskAI={handleAskAI} defaultSymbol={impactPrefill} />}
+                {activeTab === 'change'     && repoId && <ImpactWorkbench repoId={repoId} repo={repo} onAskAI={handleAskAI} defaultSymbol={impactPrefill} />}
                 {activeTab === 'evaluate'   && repoId && <EvalDashboard repoId={repoId} onAskAI={handleAskAI} />}
               </div>
             )}

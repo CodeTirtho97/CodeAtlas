@@ -17,7 +17,10 @@ export default function Sidebar({ repo, activeTab, onTabChange, onBack, rateLimi
   const utcMidnightLocal = (() => {
     const now = new Date()
     const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
-    return next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const time = next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const tz = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+      .formatToParts(next).find(p => p.type === 'timeZoneName')?.value ?? ''
+    return `${time} (${tz})`
   })()
 
   return (

@@ -25,7 +25,8 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"  # 2.5's thinking mode truncated short summaries
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # BFS limits — avoids runaway traversal on densely connected repos
 _MAX_DEPTH = 4
@@ -321,22 +322,58 @@ async def _generate_summary(
         endpoints="\n".join(f"  - {e}" for e in endpoint_strs),
     )
 
+    # Gemini primary, Groq fallback. If both fail or return empty, use a
+    # deterministic summary so the card is never blank or half a sentence.
+    text = _gemini_text(prompt)
+    if len(text) < 20:
+        text = _groq_text(prompt)
+    if len(text) >= 20:
+        return text
+
+    total = len(direct) + len(transitive)
+    if total == 0:
+        return (
+            f"Changing {symbol} looks low-risk: no other indexed files import it, "
+            f"directly or indirectly, so the blast radius is contained to the file "
+            f"itself. A standard review should be enough."
+        )
+    return (
+        f"Changing {symbol} affects {total} file(s) in this repository "
+        f"({len(direct)} directly, {len(transitive)} transitively). Risk is rated "
+        f"{risk}. Review the listed dependents and run the suggested tests before merging."
+    )
+
+
+def _gemini_text(prompt: str) -> str:
+    """Plain-text generation via Gemini. Returns '' on any failure."""
+    if not settings.GOOGLE_API_KEY:
+        return ""
     try:
         client = genai.Client(api_key=settings.GOOGLE_API_KEY)
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=256,
-            ),
+            config=genai_types.GenerateContentConfig(temperature=0.3, max_output_tokens=400),
         )
         return (response.text or "").strip()
     except Exception as exc:
         log.warning("Gemini impact summary failed: %s", exc)
-        total = len(direct) + len(transitive)
-        return (
-            f"Changing {symbol} affects {total} file(s) in this repository. "
-            f"Risk is rated {risk}. "
-            f"Review the listed dependents before merging."
+        return ""
+
+
+def _groq_text(prompt: str) -> str:
+    """Plain-text generation via Groq fallback. Returns '' on any failure."""
+    if not settings.GROQ_API_KEY:
+        return ""
+    try:
+        from groq import Groq
+        client = Groq(api_key=settings.GROQ_API_KEY)
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
         )
+        return (response.choices[0].message.content or "").strip()
+    except Exception as exc:
+        log.warning("Groq impact summary failed: %s", exc)
+        return ""
