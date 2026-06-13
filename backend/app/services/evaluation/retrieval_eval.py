@@ -14,17 +14,19 @@ Ablation mode:
   This lets you prove hybrid search earns its complexity with measured data.
 
 Generation-quality layer:
-  For each golden question the QA pipeline is also run; citation precision
-  measures whether the LLM's cited sources include the expected file.
+  For a sample of golden questions (CITATION_SAMPLE) the QA pipeline is also run;
+  citation precision measures whether the LLM's cited sources include the
+  expected file. Sampling keeps the run fast — each call is a full LLM generation.
 
 Metrics per mode:
   Recall@5       — fraction of questions where expected file is in top-5
   MRR            — Mean Reciprocal Rank
   Citation prec. — fraction where expected file appears in LLM's source list
 """
+import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from qdrant_client import AsyncQdrantClient
 
@@ -33,6 +35,19 @@ from app.services.search.retriever import search, SearchMode
 log = logging.getLogger(__name__)
 
 MAX_GOLDEN = 20
+
+# The citation/generation pass runs the full QA pipeline (one LLM call per
+# question), which is by far the slowest part of an eval. Sampling a handful of
+# questions keeps Citation Precision meaningful while turning ~20 serial LLM
+# calls into a few — the single biggest factor in how long a run takes.
+CITATION_SAMPLE = 5
+
+# Hard cap per sampled citation call. With Groq-first generation each call is a
+# few seconds; this only trips if a provider hangs, keeping the phase bounded.
+CITATION_TIMEOUT = 25.0
+
+# Progress callback: (pct: int, step: str, message: str) -> None
+ProgressCb = Callable[[int, str, str], None]
 
 # Question templates per type
 _ENDPOINT_TEMPLATES = [
@@ -93,6 +108,7 @@ async def run_evaluation(
     dependency_json: Optional[Dict[str, Any]] = None,
     run_ablation: bool = True,
     run_generation_quality: bool = True,
+    progress_cb: Optional[ProgressCb] = None,
 ) -> EvalReport:
     """Run retrieval eval with diverse question types, ablation, and citation check.
 
@@ -103,14 +119,26 @@ async def run_evaluation(
         dependency_json:      Dependency graph for class/import questions.
         run_ablation:         Whether to run dense-only and sparse-only passes.
         run_generation_quality: Whether to run QA pipeline for citation precision.
+        progress_cb:          Optional (pct, step, message) callback for live progress.
     """
+    def _report(pct: int, step: str, message: str) -> None:
+        if progress_cb:
+            try:
+                progress_cb(pct, step, message)
+            except Exception:  # progress is best-effort — never fail the run over it
+                pass
+
+    _report(3, "questions", "Building question set…")
     golden = _build_golden_set(api_endpoints_json, dependency_json)
 
     if not golden:
         log.warning("Eval: no golden questions built for repo %s", repo_id)
         return EvalReport(recall_at_5=0.0, mrr=0.0, total_questions=0, passed=0)
 
+    _report(8, "questions", f"Built {len(golden)} test questions")
+
     # ── Hybrid pass (primary) ─────────────────────────────────────────────────
+    _report(12, "retrieval", f"Searching for {len(golden)} questions…")
     results = await _run_pass(golden, repo_id, qdrant_client, mode=SearchMode.HYBRID)
 
     if not results:
@@ -119,6 +147,7 @@ async def run_evaluation(
     recall = sum(1 for r in results if r.hit) / len(results)
     mrr = sum(r.reciprocal_rank for r in results) / len(results)
     passed = sum(1 for r in results if r.hit)
+    _report(45, "retrieval", "Retrieval complete")
 
     # ── Ablation passes ───────────────────────────────────────────────────────
     ablation: List[AblationResult] = []
@@ -130,7 +159,9 @@ async def run_evaluation(
             total_questions=len(results),
             passed=passed,
         ))
-        for mode in (SearchMode.DENSE_ONLY, SearchMode.SPARSE_ONLY):
+        abl_modes = (SearchMode.DENSE_ONLY, SearchMode.SPARSE_ONLY)
+        for i, mode in enumerate(abl_modes):
+            _report(50 + i * 10, "ablation", f"Comparing search modes — {mode.value}…")
             abl_results = await _run_pass(golden, repo_id, qdrant_client, mode=mode)
             if abl_results:
                 abl_recall = sum(1 for r in abl_results if r.hit) / len(abl_results)
@@ -142,13 +173,16 @@ async def run_evaluation(
                     total_questions=len(abl_results),
                     passed=sum(1 for r in abl_results if r.hit),
                 ))
+        _report(70, "ablation", "Search-mode comparison complete")
 
-    # ── Generation-quality pass (citation precision) ──────────────────────────
+    # ── Generation-quality pass (citation precision, sampled) ─────────────────
     citation_precision: Optional[float] = None
     if run_generation_quality:
         results, citation_precision = await _run_citation_check(
-            results, repo_id, qdrant_client
+            results, repo_id, qdrant_client, report=_report,
         )
+
+    _report(99, "done", "Finalizing results…")
 
     log.info(
         "Eval repo %s: Recall@5=%.2f MRR=%.2f (%d/%d) citation_prec=%s",
@@ -262,16 +296,19 @@ async def _run_pass(
     qdrant_client: AsyncQdrantClient,
     mode: "SearchMode",
 ) -> List[QuestionResult]:
-    results: List[QuestionResult] = []
+    """Run every golden question through one search mode, concurrently.
 
-    for item in golden:
+    Searches are independent and I/O-bound, so we fan them out with gather
+    instead of awaiting one at a time — the dominant win for retrieval latency.
+    """
+    async def _one(item: Dict[str, str]) -> Optional[QuestionResult]:
         try:
             hits = await search(
                 qdrant_client, item["question"], repo_id, top_k=5, mode=mode
             )
         except Exception as exc:
             log.warning("Eval search failed for %r (%s): %s", item["question"][:60], mode, exc)
-            continue
+            return None
 
         retrieved_files = [h.file_path for h in hits]
         expected = item["expected_file"]
@@ -279,7 +316,7 @@ async def _run_pass(
         rank: Optional[int] = retrieved_files.index(expected) + 1 if hit else None
         rr = (1.0 / rank) if rank else 0.0
 
-        results.append(QuestionResult(
+        return QuestionResult(
             question=item["question"],
             question_type=item.get("question_type", "endpoint"),
             endpoint=item.get("endpoint", ""),
@@ -288,9 +325,11 @@ async def _run_pass(
             hit=hit,
             rank=rank,
             reciprocal_rank=rr,
-        ))
+        )
 
-    return results
+    gathered = await asyncio.gather(*(_one(item) for item in golden))
+    # Preserve golden order; drop questions whose search errored out.
+    return [r for r in gathered if r is not None]
 
 
 # ─── Citation precision ───────────────────────────────────────────────────────
@@ -299,30 +338,62 @@ async def _run_citation_check(
     results: List[QuestionResult],
     repo_id: str,
     qdrant_client: AsyncQdrantClient,
+    report: Optional[ProgressCb] = None,
 ) -> tuple:
-    """Run QA pipeline on each question; check whether expected_file is cited."""
+    """Run the QA pipeline on a *sample* of questions and check citation precision.
+
+    Each call is a full LLM generation. We sample up to CITATION_SAMPLE questions,
+    run them **concurrently**, force **Groq-first** generation, and bound every
+    call with a timeout — so this phase can't be held hostage by Gemini's
+    rate-limit backoff (which previously stalled each question for minutes).
+    """
     from app.services.generation.qa import answer_question
 
-    citation_hits = 0
-    checked = 0
+    sample = results[:CITATION_SAMPLE]
+    total = len(sample)
+    if not total:
+        return results, None
 
-    for r in results:
+    if report:
+        report(72, "generation", f"Checking answer quality on {total} sampled questions…")
+
+    async def _check(r: QuestionResult) -> bool:
+        """Returns True if the call completed (so it counts toward precision)."""
         try:
-            qa = await answer_question(
-                client=qdrant_client,
-                question=r.question,
-                repository_id=repo_id,
-                repo_name="eval",
-                top_k=5,
+            qa = await asyncio.wait_for(
+                answer_question(
+                    client=qdrant_client,
+                    question=r.question,
+                    repository_id=repo_id,
+                    repo_name="eval",
+                    top_k=5,
+                    groq_first=True,  # avoid Gemini's rate-limit storm
+                ),
+                timeout=CITATION_TIMEOUT,
             )
             r.answer = qa.get("answer", "")
             cited_files = {s.get("file_path", "") for s in qa.get("sources", [])}
             r.citation_hit = r.expected_file in cited_files
-            if r.citation_hit:
-                citation_hits += 1
-            checked += 1
+            return True
+        except asyncio.TimeoutError:
+            log.warning("Citation check timed out (%.0fs) for %r", CITATION_TIMEOUT, r.question[:60])
+            return False
         except Exception as exc:
             log.warning("Citation check failed for %r: %s", r.question[:60], exc)
+            return False
 
+    tasks = [asyncio.create_task(_check(r)) for r in sample]
+    checked = 0
+    done = 0
+    for fut in asyncio.as_completed(tasks):
+        ok = await fut
+        done += 1
+        if ok:
+            checked += 1
+        if report:
+            pct = 72 + int((done / total) * 26)  # spans 72 → 98 across the sample
+            report(pct, "generation", f"Checked {done}/{total} sampled answers…")
+
+    citation_hits = sum(1 for r in sample if r.citation_hit)
     citation_precision = citation_hits / checked if checked else None
     return results, citation_precision

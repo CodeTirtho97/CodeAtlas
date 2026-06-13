@@ -226,6 +226,18 @@ export interface EvalReport {
   previous?: PreviousEvalRun | null   // headline metrics of the run before this one
 }
 
+// Live progress of a background eval run, polled via GET /eval/status.
+export type EvalStep =
+  | 'idle' | 'questions' | 'retrieval' | 'ablation' | 'generation' | 'done' | 'error'
+
+export interface EvalStatus {
+  status: 'running' | 'completed' | 'failed' | 'idle'
+  progress_pct: number
+  step: EvalStep
+  message: string
+  error?: string | null
+}
+
 // ── Streaming chat ────────────────────────────────────────────────────────────
 
 export type StreamEvent =

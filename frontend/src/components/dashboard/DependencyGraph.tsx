@@ -10,11 +10,11 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow, ReactFlowProvider,
-  Background, Controls,
+  Controls,
   Handle, Position,
   useNodesState, useEdgesState, useReactFlow,
   type Node, type Edge, type NodeProps,
-  BackgroundVariant, MarkerType,
+  MarkerType,
 } from '@xyflow/react'
 import dagre from '@dagrejs/dagre'
 import '@xyflow/react/dist/style.css'
@@ -60,28 +60,32 @@ function roleOf(usedBy: number, uses: number, total: number): NodeData['role'] {
   return 'normal'
 }
 
+// Blueprint palette — glassy navy cards with role-coloured outlines + glow.
 const ROLE = {
   hub: {
-    bg:        'linear-gradient(170deg, rgba(249,115,22,0.14) 0%, rgba(249,115,22,0.04) 60%), #0c0f16',
-    bgFocused: 'linear-gradient(170deg, rgba(249,115,22,0.32) 0%, rgba(249,115,22,0.10) 100%), #140c05',
-    border: '#f97316', text: '#fed7aa', dot: '#f97316',
+    bg:        'linear-gradient(165deg, rgba(245,158,11,0.16), rgba(245,158,11,0.03) 70%), rgba(7,18,32,0.90)',
+    bgFocused: 'linear-gradient(165deg, rgba(245,158,11,0.34), rgba(245,158,11,0.08) 100%), rgba(10,16,24,0.96)',
+    border: '#f59e0b', text: '#fde68a', dot: '#f59e0b', glow: 'rgba(245,158,11,0.45)',
   },
   sink: {
-    bg:        'linear-gradient(170deg, rgba(52,211,153,0.12) 0%, rgba(52,211,153,0.03) 60%), #0c0f16',
-    bgFocused: 'linear-gradient(170deg, rgba(52,211,153,0.28) 0%, rgba(52,211,153,0.08) 100%), #051410',
-    border: '#34d399', text: '#a7f3d0', dot: '#34d399',
+    bg:        'linear-gradient(165deg, rgba(52,211,153,0.14), rgba(52,211,153,0.03) 70%), rgba(7,18,32,0.90)',
+    bgFocused: 'linear-gradient(165deg, rgba(52,211,153,0.30), rgba(52,211,153,0.07) 100%), rgba(5,20,16,0.96)',
+    border: '#34d399', text: '#a7f3d0', dot: '#34d399', glow: 'rgba(52,211,153,0.40)',
   },
   source: {
-    bg:        'linear-gradient(170deg, rgba(96,165,250,0.12) 0%, rgba(96,165,250,0.03) 60%), #0c0f16',
-    bgFocused: 'linear-gradient(170deg, rgba(96,165,250,0.28) 0%, rgba(96,165,250,0.08) 100%), #060d1c',
-    border: '#60a5fa', text: '#bfdbfe', dot: '#60a5fa',
+    bg:        'linear-gradient(165deg, rgba(56,189,248,0.14), rgba(56,189,248,0.03) 70%), rgba(7,18,32,0.90)',
+    bgFocused: 'linear-gradient(165deg, rgba(56,189,248,0.30), rgba(56,189,248,0.07) 100%), rgba(6,16,28,0.96)',
+    border: '#38bdf8', text: '#bae6fd', dot: '#38bdf8', glow: 'rgba(56,189,248,0.40)',
   },
   normal: {
-    bg:        'linear-gradient(170deg, rgba(148,163,184,0.07) 0%, rgba(148,163,184,0.02) 60%), #0c0f16',
-    bgFocused: 'linear-gradient(170deg, rgba(148,163,184,0.18) 0%, rgba(148,163,184,0.06) 100%), #0e1320',
-    border: '#475569', text: '#94a3b8', dot: '#64748b',
+    bg:        'linear-gradient(165deg, rgba(125,211,252,0.06), rgba(125,211,252,0.01) 70%), rgba(7,18,32,0.90)',
+    bgFocused: 'linear-gradient(165deg, rgba(125,211,252,0.16), rgba(125,211,252,0.04) 100%), rgba(9,18,30,0.96)',
+    border: '#3b6e8f', text: '#cbd5e1', dot: '#7dd3fc', glow: 'rgba(56,189,248,0.20)',
   },
 }
+
+// Blueprint canvas — subtle deep-navy, no grid
+const BLUEPRINT_BG = 'radial-gradient(ellipse 130% 90% at 50% -10%, #0c1a28 0%, #0a141f 55%, #08111a 100%)'
 
 // ─── Custom node ──────────────────────────────────────────────────────────────
 
@@ -103,10 +107,10 @@ function DepNode({ data }: NodeProps) {
   const borderWidth = d.focused ? 2 : d.connected ? 1.5 : 1
 
   const boxShadow = d.focused
-    ? `0 0 0 3px ${st.border}44, 0 8px 24px ${st.border}33`
+    ? `0 0 0 1.5px ${st.border}, 0 0 26px ${st.glow}, 0 10px 30px rgba(0,0,0,0.55)`
     : d.connected
-    ? `0 0 0 1px ${st.border}33, 0 4px 12px rgba(0,0,0,0.35)`
-    : '0 2px 10px rgba(0,0,0,0.35)'
+    ? `0 0 14px ${st.glow}, 0 4px 14px rgba(0,0,0,0.45)`
+    : `0 0 10px ${st.glow}, 0 2px 10px rgba(0,0,0,0.5)`
 
   return (
     <div
@@ -256,8 +260,8 @@ function findComponents(deps: Record<string, DepEntry>): Component[] {
 
 // ─── Build RF nodes + edges for one component ─────────────────────────────────
 
-const BASE_EDGE_STYLE = { stroke: '#1e3a5f', strokeWidth: 1.5 }
-const BASE_MARKER     = { type: MarkerType.ArrowClosed, color: '#1e3a5f', width: 14, height: 14 }
+const BASE_EDGE_STYLE = { stroke: '#1d4e72', strokeWidth: 1.2 }
+const BASE_MARKER     = { type: MarkerType.ArrowClosed, color: '#1d4e72', width: 13, height: 13 }
 
 function buildComponent(
   files: string[], deps: Record<string, DepEntry>, search: string,
@@ -285,7 +289,9 @@ function buildComponent(
         connected:   false,
         highlighted: sq ? f.toLowerCase().includes(sq) : false,
       } satisfies NodeData,
-      style: { background: ROLE[role].bg, border: `1px solid ${ROLE[role].border}` },
+      // The visible card is the inner DepNode div — keep the RF node wrapper
+      // chromeless so we don't get a second (square) border behind it.
+      style: { background: 'transparent', border: 'none' },
     }
   })
 
@@ -317,7 +323,7 @@ function MiniCard({ files, deps, onCheckImpact, onAskFile }: {
 
   return (
     <div className="w-full flex flex-col items-center gap-0 py-8"
-      style={{ background: '#050d1a', borderRadius: '1rem', border: '1px solid #1e293b' }}>
+      style={{ background: BLUEPRINT_BG, borderRadius: '1rem', border: '1px solid rgba(56,189,248,0.15)' }}>
       {sorted.map((f, i) => {
         const d      = deps[f]
         const uses   = (d?.uses    ?? []).filter(u => files.includes(u)).length
@@ -341,8 +347,8 @@ function MiniCard({ files, deps, onCheckImpact, onAskFile }: {
             )}
 
             {/* Node card — matches DepNode dimensions/style */}
-            <div className="w-full rounded-xl border px-3 py-2.5 shadow-lg"
-              style={{ background: st.bg, borderColor: st.border, borderWidth: 1 }}>
+            <div className="w-full rounded-xl border px-3 py-2.5"
+              style={{ background: st.bg, borderColor: st.border, borderWidth: 1, boxShadow: `0 0 12px ${st.glow}, 0 4px 14px rgba(0,0,0,0.45)` }}>
               <p className="text-[11px] font-bold font-mono truncate leading-tight"
                 style={{ color: st.text }}>{f.split('/').pop()}</p>
               <p className="text-[9px] font-mono mt-0.5 truncate opacity-40"
@@ -533,8 +539,8 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact, onAskFile, fo
       return {
         ...e,
         animated:  active,
-        style:     active ? { stroke: '#60a5fa', strokeWidth: 2 } : { stroke: '#0f172a22', strokeWidth: 0.5 },
-        markerEnd: active ? { type: MarkerType.ArrowClosed, color: '#60a5fa', width: 14, height: 14 } : BASE_MARKER,
+        style:     active ? { stroke: '#38bdf8', strokeWidth: 2, filter: 'drop-shadow(0 0 4px rgba(56,189,248,0.6))' } : { stroke: '#0f172a33', strokeWidth: 0.5 },
+        markerEnd: active ? { type: MarkerType.ArrowClosed, color: '#38bdf8', width: 14, height: 14 } : BASE_MARKER,
       }
     }))
 
@@ -597,15 +603,15 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact, onAskFile, fo
     <ImpactCtx.Provider value={onCheckImpact ?? null}>
       <style>{`
         .react-flow__controls { box-shadow: none !important; }
-        .react-flow__controls-button { background:#1e293b!important; border-color:#334155!important; }
-        .react-flow__controls-button svg { fill:#94a3b8!important; }
-        .react-flow__controls-button:hover { background:#334155!important; }
-        .react-flow__controls-button:hover svg { fill:#e2e8f0!important; }
+        .react-flow__controls-button { background:#0a1f33!important; border-color:#1d4e72!important; }
+        .react-flow__controls-button svg { fill:#7dd3fc!important; }
+        .react-flow__controls-button:hover { background:#123f5e!important; }
+        .react-flow__controls-button:hover svg { fill:#e0f2fe!important; }
         .react-flow__node { outline: none !important; }
       `}</style>
 
-      <div ref={containerRef} className="w-full rounded-2xl border border-surface-border overflow-hidden relative"
-        style={{ height, background: '#050d1a' }}>
+      <div ref={containerRef} className="w-full rounded-2xl border border-sky-500/15 overflow-hidden relative"
+        style={{ height, background: BLUEPRINT_BG }}>
 
         {/* Focused-node pill — top-centre with "Check impact" button */}
         {focusedId && (
@@ -663,11 +669,10 @@ function ComponentGraphInner({ files, deps, search, onCheckImpact, onAskFile, fo
           elementsSelectable={false}
           nodesFocusable={false}
           proOptions={{ hideAttribution: true }}
-          style={{ background: '#050d1a' }}
+          style={{ background: 'transparent' }}
         >
-          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#1e293b" />
           <Controls showZoom={false} showInteractive={false}
-            style={{ background: '#0f172a', border: '1px solid #1e293b' }} />
+            style={{ background: '#0a1f33', border: '1px solid #1d4e72' }} />
         </ReactFlow>
 
         {/* Reactive zoom hint — appears at the bottom centre when scrolling without Ctrl */}

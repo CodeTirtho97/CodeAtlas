@@ -154,7 +154,7 @@ export const TAB_COLORS: Record<TabId, {
 export const PAGE_META: Record<TabId, { title: string; description: string }> = {
   understand: { title: 'Understand',     description: 'What this repo does, how the code is composed, and the path to learn it.' },
   explore:    { title: 'Explore',        description: 'Search the code, browse the API surface, and trace dependencies across files.' },
-  change:     { title: 'Impact',          description: 'Type any function, class, or file to see exactly what breaks if you change it — dependents, routes, and tests to run.' },
+  change:     { title: 'Impact',          description: 'Type any function, class, or file to see exactly what breaks if you change it: dependents, routes, and tests to run.' },
   evaluate:   { title: 'Evaluate',       description: 'Measure how accurately the retrieval layer finds the right code for endpoint questions.' },
   ask:        { title: 'Ask AI',         description: 'Investigate the codebase in natural language and inspect citations behind every answer.' },
 }

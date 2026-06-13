@@ -8,6 +8,10 @@ const client = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
   withCredentials: true,
+  // Safety net so a stuck backend surfaces an error instead of hanging the UI
+  // forever. Long-running work (e.g. eval) is launched as a background job and
+  // polled, so individual requests should always return quickly.
+  timeout: 30000,
 })
 
 // On 401, clear stale user data and redirect to the sign-in page.

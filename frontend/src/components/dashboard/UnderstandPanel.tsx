@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { reposApi } from '../../api/repos'
 import type { Repository, RepoComposition } from '../../types'
-import { EmptyState, SectionLabel, techColor, STEP_ACCENTS } from './shared'
+import { EmptyState, SectionLabel, STEP_ACCENTS } from './shared'
+import TechIcon from '../TechIcon'
 
 type NavTab = 'explore' | 'change' | 'evaluate' | 'ask'
 
@@ -82,23 +83,45 @@ function IdentityCard({ repo }: { repo: Repository }) {
       <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-5">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-11 h-11 rounded-xl bg-surface-raised border border-surface-border flex items-center justify-center shrink-0">
-            <svg className="w-5 h-5 text-ink-muted" fill="currentColor" viewBox="0 0 24 24">
+            <svg
+              className="w-5 h-5 text-ink-muted"
+              fill="currentColor"
+              viewBox="0 0 24 24"
+            >
               <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
             </svg>
           </div>
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-ink truncate">{repoShortName}</h1>
-            <a href={repo.github_url} target="_blank" rel="noopener noreferrer"
-              className="text-[11px] text-ink-subtle hover:text-blue-400 transition-colors font-mono flex items-center gap-1 mt-0.5">
-              <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+            <h1 className="text-lg font-bold text-ink truncate">
+              {repoShortName}
+            </h1>
+            <a
+              href={repo.github_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-ink-subtle hover:text-blue-400 transition-colors font-mono flex items-center gap-1 mt-0.5"
+            >
+              <svg
+                className="w-3 h-3 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                />
               </svg>
               {repo.github_url}
             </a>
           </div>
         </div>
-        <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400
-                         bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-full shrink-0">
+        <span
+          className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400
+                         bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-full shrink-0"
+        >
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           Indexed
         </span>
@@ -106,19 +129,28 @@ function IdentityCard({ repo }: { repo: Repository }) {
 
       {summary?.purpose && (
         <div className="mx-6 mb-5 rounded-xl bg-surface-raised/40 border border-surface-border/60 px-5 py-4">
-          <p className="text-xs font-bold uppercase tracking-widest text-ink-subtle mb-2">What this codebase does</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-ink-subtle mb-2">
+            What this codebase does
+          </p>
           <p className="text-sm leading-relaxed text-ink">{summary.purpose}</p>
           {summary.stack && summary.stack.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-surface-border/50">
-              {summary.stack.map(t => (
-                <span key={t} className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${techColor(t)}`}>{t}</span>
+              {summary.stack.map((t) => (
+                <span
+                  key={t}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full
+           bg-transparent text-ink border border-indigo-500/50"
+                >
+                  <TechIcon tech={t} className="w-3.5 h-3.5" />
+                  {t}
+                </span>
               ))}
             </div>
           )}
         </div>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Codebase anatomy (composition) ───────────────────────────────────────────
@@ -352,7 +384,7 @@ function CompositionSection({ comp, loading }: { comp: RepoComposition | null; l
         {/* Footer facts — pinned to the card bottom so columns align */}
         <p className="text-[11px] text-ink-subtle border-t border-surface-border/50 pt-3 mt-auto">
           <span className="font-semibold text-ink-muted">{comp.total_files.toLocaleString()} files indexed</span>
-          {typeSummary && <> — made up of {typeSummary}.</>}
+          {typeSummary && <>, made up of {typeSummary}.</>}
         </p>
       </div>
     </div>
@@ -697,7 +729,7 @@ function QuickActions({ onNavigate }: { onNavigate: (tab: NavTab) => void }) {
         <ActionCard
           icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>}
           title="Find code instantly"
-          description="Describe what you're looking for and get the exact files — free, no question quota used."
+          description="Describe what you're looking for and get the exact files (free, no question quota used)."
           cta="Open Code Search"
           color="bg-cyan-500/10 border-cyan-500/25 text-cyan-400"
           ctaColor="text-cyan-400"
@@ -706,7 +738,7 @@ function QuickActions({ onNavigate }: { onNavigate: (tab: NavTab) => void }) {
         <ActionCard
           icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>}
           title="See what breaks if you change something"
-          description="Type any function or file — instantly see every other file that depends on it."
+          description="Type any function or file to instantly see every other file that depends on it."
           cta="Open Impact"
           color="bg-amber-500/10 border-amber-500/25 text-amber-400"
           ctaColor="text-amber-400"

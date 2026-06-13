@@ -4,19 +4,13 @@ Reads README + top-level manifest files from the cloned repo and
 asks Gemini to produce a structured JSON summary card.
 Called once at the end of ingestion.
 """
-import json
 import logging
 from pathlib import Path
 from typing import Optional
 
-from google import genai
-from google.genai import types as genai_types
-
-from app.core.config import settings
+from app.services.generation.llm_json import generate_json
 
 log = logging.getLogger(__name__)
-
-GEMINI_MODEL = "gemini-2.5-flash"
 
 # Manifest files that describe the project stack
 _MANIFEST_NAMES = [
@@ -62,7 +56,7 @@ def generate_summary(github_url: str, clone_dir: Path) -> dict:
     context = _build_context(clone_dir)
     prompt = _SUMMARY_PROMPT.format(repo_name=repo_name, context=context)
 
-    result = _call_gemini(prompt)
+    result = generate_json(prompt, temperature=0.1, label="summary")
     if result:
         return result
 
@@ -104,44 +98,3 @@ def _find_readme(clone_dir: Path) -> Optional[Path]:
         if path.exists():
             return path
     return None
-
-
-# ─── Gemini Call ─────────────────────────────────────────────────────────────
-
-def _call_gemini(prompt: str) -> Optional[dict]:
-    """Call Gemini with retry on failure. Returns parsed dict or None."""
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-
-    for attempt in range(1, 4):
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                ),
-            )
-            return _parse_json(response.text)
-        except Exception as exc:
-            log.warning(
-                "Gemini summary attempt %d/3 failed: %s", attempt, exc
-            )
-
-    return None
-
-
-def _parse_json(text: str) -> Optional[dict]:
-    """Extract and parse JSON from Gemini response text."""
-    if not text:
-        return None
-    text = text.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        log.warning("Could not parse Gemini JSON response: %.200s", text)
-        return None

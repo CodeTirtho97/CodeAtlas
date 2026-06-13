@@ -195,7 +195,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
         {preFilled && (
           <p className="text-[11px] text-orange-400/80 mt-2.5 flex items-center gap-1.5">
             <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            File path pre-filled — click <strong className="font-semibold">Analyze</strong> to check its impact.
+            File path pre-filled. Click <strong className="font-semibold">Analyze</strong> to check its impact.
           </p>
         )}
         {error && (
@@ -228,7 +228,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
                 <button
                   key={h.symbol + h.ts}
                   onClick={() => { setSymbol(h.symbol); setResult(h.result); setCheckedTests({}); setDepsExpanded('direct') }}
-                  title={`${h.symbol} — ${rc.label}, ${h.result.total_impact} file${h.result.total_impact !== 1 ? 's' : ''} affected`}
+                  title={`${h.symbol}: ${rc.label}, ${h.result.total_impact} file${h.result.total_impact !== 1 ? 's' : ''} affected`}
                   className="flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-lg border border-surface-border bg-surface-card hover:border-orange-500/30 hover:bg-orange-500/5 transition-all group"
                 >
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${rc.bar}`} title={rc.label} />
@@ -255,14 +255,14 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
                   color: 'text-orange-400',
                   bg: 'bg-orange-500/10 border-orange-500/20',
                   title: 'Type a symbol',
-                  body: "Enter any indexed function, class, or file path — not just API endpoints. Any symbol in your codebase you're about to change.",
+                  body: "Enter any indexed function, class, or file path, not just API endpoints. Any symbol in your codebase you're about to change.",
                 },
                 {
                   step: '2',
                   color: 'text-amber-400',
                   bg: 'bg-amber-500/10 border-amber-500/20',
                   title: 'See what breaks',
-                  body: 'Instantly see every file, module, and API endpoint that depends on what you typed — directly or indirectly.',
+                  body: 'Instantly see every file, module, and API endpoint that depends on what you typed, directly or indirectly.',
                 },
                 {
                   step: '3',
@@ -288,7 +288,7 @@ export default function ImpactWorkbench({ repoId, onAskAI, defaultSymbol }: Prop
               <p className="text-center leading-relaxed italic">
                 <span className="text-xs text-ink-subtle">Type a </span>
                 <span className="text-xs font-semibold text-ink-muted">function, class, or file</span>
-                <span className="text-xs text-ink-subtle"> — get back every </span>
+                <span className="text-xs text-ink-subtle"> to get back every </span>
                 <span className="text-xs font-semibold text-ink-muted">file that depends on it</span>
                 <span className="text-xs text-ink-subtle">,</span>
                 <br />

@@ -184,7 +184,14 @@ async def answer_question(
     repository_id: str,
     repo_name: str,
     top_k: int = DEFAULT_TOP_K,
+    groq_first: bool = False,
 ) -> dict:
+    """Answer a question over the repo.
+
+    groq_first: when True, generate with Groq before Gemini. Used by
+    latency/quota-sensitive callers (the eval citation pass) to sidestep
+    Gemini's rate-limit backoff.
+    """
     results = await search(client, question, repository_id, top_k=top_k, rerank=True)
     if not results:
         return {
@@ -199,7 +206,7 @@ async def answer_question(
     context = _build_context(results)
     prompt  = _QA_PROMPT.format(repo_name=repo_name, question=question, context=context)
 
-    raw = await _call_llm(prompt)
+    raw = await _call_llm(prompt, groq_first=groq_first)
     if raw is None:
         return {"answer": "Unable to generate an answer at this time. Please try again.", "sources": []}
 
@@ -309,8 +316,21 @@ async def stream_answer_with_history(
 
 # ─── LLM dispatch ─────────────────────────────────────────────────────────────
 
-async def _call_llm(prompt: str) -> Optional[dict]:
-    """Non-streaming: Gemini primary, Groq fallback on any failure."""
+async def _call_llm(prompt: str, groq_first: bool = False) -> Optional[dict]:
+    """Non-streaming JSON answer. Default: Gemini primary, Groq fallback.
+
+    groq_first=True flips the order so latency/quota-sensitive callers avoid
+    Gemini's rate-limit retry/backoff entirely when Groq is configured.
+    """
+    if groq_first:
+        groq = _get_groq_client()
+        if groq:
+            result = await _call_groq(groq, prompt)
+            if result is not None:
+                return result
+            log.info("Groq-first Q&A failed — falling back to Gemini")
+        return await _call_gemini(prompt)
+
     result = await _call_gemini(prompt)
     if result is not None:
         return result

@@ -130,16 +130,28 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
     const cur = displayedLenRef.current
     const remaining = raw.length - cur
     if (remaining > 0) {
-      // Comfortable base pace (1 char/tick). Only speed up when far behind.
-      const step = remaining > 200 ? 6 : remaining > 80 ? 2 : 1
+      // The backend streams the whole answer in ~1–2s, so by the time the network
+      // stream ends there's usually a large tail still to reveal. Scale the step to
+      // the backlog so that tail drains smoothly (and decelerates near the end)
+      // rather than dumping all at once, while live streaming stays gentle.
+      const step = remaining > 300 ? 8 : remaining > 120 ? 4 : remaining > 40 ? 2 : 1
       const next = Math.min(cur + step, raw.length)
       displayedLenRef.current = next
       setDisplayedStreamContent(raw.slice(0, next))
-      animTimerRef.current = setTimeout(tickDisplay, 28)
+      animTimerRef.current = setTimeout(tickDisplay, 20)
     } else {
       animTimerRef.current = null
     }
   }, [])
+
+  // Resolves once the typewriter has revealed everything in rawStreamRef.
+  const waitForTypewriter = useCallback(() => new Promise<void>(resolve => {
+    const check = () => {
+      if (displayedLenRef.current >= rawStreamRef.current.length) resolve()
+      else setTimeout(check, 30)
+    }
+    check()
+  }), [])
 
   const handleCiteClick = useCallback((msgId: string | null, path: string | null) => {
     setInspectedMessageId(msgId)  // null clears it → panel falls through to streamingMsg.sources
@@ -317,10 +329,14 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
         }
       })
 
-      // Snap typewriter to full content before clearing streaming state
+      // The network stream is done, but the typewriter is usually still behind.
+      // Let it finish revealing the tail (instead of snapping to full text) before
+      // we swap the streaming bubble for the persisted message.
+      if (!animTimerRef.current && rawStreamRef.current.length > displayedLenRef.current) {
+        animTimerRef.current = setTimeout(tickDisplay, 20)
+      }
+      await waitForTypewriter()
       if (animTimerRef.current) { clearTimeout(animTimerRef.current); animTimerRef.current = null }
-      displayedLenRef.current = accContent.length
-      setDisplayedStreamContent(accContent)
 
       if (doneMsgId) {
         // Successful generation — add persisted messages to history
@@ -374,6 +390,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
         setError(detail || 'Failed to send message')
       }
     } finally {
+      if (animTimerRef.current) { clearTimeout(animTimerRef.current); animTimerRef.current = null }
       setLoading(false)
     }
   }
@@ -844,7 +861,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                       >
                         Code Search
                       </button>{" "}
-                      finds the right files instantly — it's free and doesn't
+                      finds the right files instantly. It's free and doesn't
                       use your 30 daily questions.
                     </p>
                     <button
@@ -939,7 +956,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                           Daily limit reached (30/day)
                         </p>
                         <p className="text-red-400/70 mt-0.5">
-                          Your question is saved above. Come back tomorrow —
+                          Your question is saved above. Come back tomorrow;
                           limits reset at midnight UTC.
                         </p>
                       </div>
@@ -1098,7 +1115,7 @@ export default function AskAIWorkspace({ repoId, repo, onRateLimitsChange, initi
                           d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                         />
                       </svg>
-                      Question ready — click{" "}
+                      Question ready. Click{" "}
                       <strong className="font-semibold">Send</strong> to get
                       your answer.
                     </p>

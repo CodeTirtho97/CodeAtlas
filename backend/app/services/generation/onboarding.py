@@ -7,18 +7,13 @@ Called once at the end of ingestion, after the summary.
 import json
 import logging
 from collections import Counter
-from typing import List, Optional
+from typing import List
 
-from google import genai
-from google.genai import types as genai_types
-
-from app.core.config import settings
+from app.services.generation.llm_json import generate_json
 from app.services.ingestion.chunk import Chunk
 from app.services.ingestion.file_filter import FileInfo
 
 log = logging.getLogger(__name__)
-
-GEMINI_MODEL = "gemini-2.5-flash"
 
 _ONBOARDING_PROMPT = """\
 You are creating a developer onboarding guide for the repository: {repo_name}
@@ -73,7 +68,7 @@ def generate_onboarding_guide(
         file_structure=file_structure,
     )
 
-    result = _call_gemini(prompt)
+    result = generate_json(prompt, temperature=0.2, label="onboarding")
     if result:
         return result
 
@@ -126,41 +121,3 @@ def _build_file_structure(files: List[FileInfo], chunks: List[Chunk]) -> str:
         lines.append(f"  {path}{suffix}")
 
     return "\n".join(lines) if lines else "No Tier 1 source files found."
-
-
-# ─── Gemini Call ─────────────────────────────────────────────────────────────
-
-def _call_gemini(prompt: str) -> Optional[dict]:
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-
-    for attempt in range(1, 4):
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.2,
-                ),
-            )
-            return _parse_json(response.text)
-        except Exception as exc:
-            log.warning(
-                "Gemini onboarding attempt %d/3 failed: %s", attempt, exc
-            )
-
-    return None
-
-
-def _parse_json(text: str) -> Optional[dict]:
-    if not text:
-        return None
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        log.warning("Could not parse Gemini JSON response: %.200s", text)
-        return None

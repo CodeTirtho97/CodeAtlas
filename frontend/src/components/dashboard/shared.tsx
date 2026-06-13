@@ -7,6 +7,7 @@ export const TECH_COLORS: Record<string, string> = {
   javascript: 'bg-yellow-400/15 text-yellow-300 border-yellow-400/20',
   typescript: 'bg-sky-400/15 text-sky-300 border-sky-400/20',
   react:      'bg-cyan-400/15 text-cyan-300 border-cyan-400/20',
+  reactrouter:'bg-rose-400/15 text-rose-300 border-rose-400/20',
   fastapi:    'bg-teal-400/15 text-teal-300 border-teal-400/20',
   nodejs:     'bg-green-500/15 text-green-300 border-green-500/20',
   express:    'bg-zinc-400/15 text-zinc-300 border-zinc-400/20',
@@ -17,9 +18,48 @@ export const TECH_COLORS: Record<string, string> = {
   docker:     'bg-sky-500/15 text-sky-400 border-sky-500/20',
   postgresql: 'bg-indigo-400/15 text-indigo-300 border-indigo-400/20',
   mongodb:    'bg-green-400/15 text-green-300 border-green-400/20',
+  mongoose:   'bg-lime-400/15 text-lime-300 border-lime-400/20',
   redis:      'bg-red-400/15 text-red-300 border-red-400/20',
   graphql:    'bg-pink-400/15 text-pink-300 border-pink-400/20',
+  materialui: 'bg-blue-400/15 text-blue-300 border-blue-400/20',
+  tailwindcss:'bg-teal-300/15 text-teal-200 border-teal-300/20',
+  framermotion:'bg-fuchsia-400/15 text-fuchsia-300 border-fuchsia-400/20',
+  jwt:        'bg-purple-400/15 text-purple-300 border-purple-400/20',
+  bcrypt:     'bg-amber-400/15 text-amber-300 border-amber-400/20',
+  vite:       'bg-violet-400/15 text-violet-300 border-violet-400/20',
 }
+
+// Aliases so common spellings normalize onto a known entry above.
+const TECH_ALIASES: Record<string, string> = {
+  reactjs: 'react',
+  expressjs: 'express',
+  nodejs: 'nodejs',
+  node: 'nodejs',
+  mui: 'materialui',
+  tailwind: 'tailwindcss',
+  postgres: 'postgresql',
+  golang: 'go',
+  ts: 'typescript',
+  js: 'javascript',
+}
+
+// Palette for techs we don't have a brand color for — picked deterministically
+// from the name so each distinct tech gets a stable, distinct color (instead of
+// every unknown collapsing to the same violet).
+const FALLBACK_PALETTE = [
+  'bg-rose-400/15 text-rose-300 border-rose-400/20',
+  'bg-amber-400/15 text-amber-300 border-amber-400/20',
+  'bg-lime-400/15 text-lime-300 border-lime-400/20',
+  'bg-emerald-400/15 text-emerald-300 border-emerald-400/20',
+  'bg-teal-400/15 text-teal-300 border-teal-400/20',
+  'bg-cyan-400/15 text-cyan-300 border-cyan-400/20',
+  'bg-sky-400/15 text-sky-300 border-sky-400/20',
+  'bg-indigo-400/15 text-indigo-300 border-indigo-400/20',
+  'bg-violet-400/15 text-violet-300 border-violet-400/20',
+  'bg-fuchsia-400/15 text-fuchsia-300 border-fuchsia-400/20',
+  'bg-pink-400/15 text-pink-300 border-pink-400/20',
+  'bg-orange-400/15 text-orange-300 border-orange-400/20',
+]
 
 export const METHOD_STYLE: Record<string, string> = {
   GET:    'bg-emerald-500/10 text-emerald-400 border-emerald-500/25',
@@ -47,8 +87,14 @@ export const STEP_ACCENTS = [
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export function techColor(tech: string) {
-  return TECH_COLORS[tech.toLowerCase().replace(/[\s\-_.]/g, '')] ??
-    'bg-violet-400/15 text-violet-300 border-violet-400/20'
+  const key = tech.toLowerCase().replace(/[\s\-_.]/g, '')
+  const resolved = TECH_ALIASES[key] ?? key
+  if (TECH_COLORS[resolved]) return TECH_COLORS[resolved]
+  // Deterministic fallback: hash the name into the palette so distinct techs
+  // get distinct (but stable across renders) colors.
+  let hash = 0
+  for (let i = 0; i < resolved.length; i++) hash = (hash * 31 + resolved.charCodeAt(i)) >>> 0
+  return FALLBACK_PALETTE[hash % FALLBACK_PALETTE.length]
 }
 
 export function methodStyle(m: string | null) {

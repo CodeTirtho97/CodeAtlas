@@ -1,4 +1,5 @@
 import { TECH_STACK } from './archData'
+import TechIcon from '../TechIcon'
 
 export default function TechStackSection() {
   return (
@@ -10,7 +11,8 @@ export default function TechStackSection() {
         <div className="grid sm:grid-cols-2 gap-3">
           {TECH_STACK.map(t => (
             <div key={t.name} className="flex gap-4 rounded-2xl border border-surface-border bg-surface-card p-4 hover:border-surface-border/80 transition-colors">
-              <span className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-xs font-bold self-start shrink-0 ${t.color}`}>
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold self-start shrink-0 ${t.color}`}>
+                <TechIcon tech={t.name} className="w-4 h-4" />
                 {t.name}
               </span>
               <div className="min-w-0">

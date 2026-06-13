@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
+    "@iconify/react": "^6.0.2",
     "@types/dagre": "^0.7.54",
     "@xyflow/react": "^12.11.0",
     "axios": "^1.6.2",

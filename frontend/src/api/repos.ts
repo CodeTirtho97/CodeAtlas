@@ -1,6 +1,6 @@
 import client from './client'
 import type {
-  Repository, IngestionJob, IngestionStatus, ImpactResult, EvalReport,
+  Repository, IngestionJob, IngestionStatus, ImpactResult, EvalReport, EvalStatus,
   RepoComposition, CodeSearchResponse,
 } from '../types'
 
@@ -54,8 +54,14 @@ export const reposApi = {
     return r.data ?? null
   },
 
-  runEval: async (repoId: string): Promise<EvalReport> => {
-    const r = await client.post(`/repos/${repoId}/eval/run`)
+  // Launches the eval in the background; returns immediately with an ack.
+  // Poll getEvalStatus until status is 'completed', then fetch getEvalResult.
+  runEval: async (repoId: string): Promise<void> => {
+    await client.post(`/repos/${repoId}/eval/run`)
+  },
+
+  getEvalStatus: async (repoId: string): Promise<EvalStatus> => {
+    const r = await client.get(`/repos/${repoId}/eval/status`)
     return r.data
   },
 }
